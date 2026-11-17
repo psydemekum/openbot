@@ -1,7 +1,13 @@
-import type { WorkflowNode, WorkflowStep } from "@openbot/contracts/ipc";
+import {
+  type AttachmentSummary,
+  type WorkflowNode,
+  type WorkflowStep,
+  workflowFileResult,
+} from "@openbot/contracts/ipc";
 import { Button, Typography } from "heroui-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
+import { useAttachmentFiles } from "@/features/chat/components/attachment-preview";
 import { WorkflowKindTile } from "@/features/workflows/components/workflow-kind-tile";
 import { rowIndent } from "@/features/workflows/components/workflow-steps-list";
 import { STEP_STATUS_LABEL, stepLabel, stepText, triggerType } from "@/features/workflows/model/workflow-steps";
@@ -32,6 +38,7 @@ export function WorkflowRunStepRow({
   onRetry,
   onStop,
   depth,
+  serverId,
 }: {
   node: WorkflowNode;
   step: WorkflowStep | undefined;
@@ -42,12 +49,16 @@ export function WorkflowRunStepRow({
   onStop: (step: WorkflowStep) => void;
   /** The depth of the path of the step: each path sits one level deeper than its split. */
   depth?: number;
+  serverId: string;
 }) {
   const { t } = useText();
   const [open, setOpen] = useState(false);
   const status = step?.status;
+  const file = node.kind === "output" && step?.status === "done" ? workflowFileResult(step.output) : undefined;
+  const files: AttachmentSummary[] = file ? [{ ...file, kind: "file", previewKind: "none", previewUrl: null }] : [];
+  const download = useAttachmentFiles(serverId, files);
   // The output of an image or video step is the id of the file that it made, not text to read.
-  const output = node.kind !== "image" && step?.output?.trim() ? step.output : null;
+  const output = !file && node.kind !== "image" && step?.output?.trim() ? step.output : null;
   return (
     <View
       className={`flex-row gap-3 py-3 pr-4 ${depth === undefined ? "pl-4" : ""} ${status === "skipped" || !status ? "opacity-60" : ""}`}
@@ -80,6 +91,16 @@ export function WorkflowRunStepRow({
           <Typography.Paragraph className="text-danger-text" style={typeScale.caption}>
             {step.error}
           </Typography.Paragraph>
+        ) : null}
+        {file ? (
+          <View className="gap-1.5">
+            <Typography.Paragraph selectable style={typeScale.caption}>
+              {file.name}
+            </Typography.Paragraph>
+            <Button variant="tertiary" isDisabled={download.busy} onPress={() => void download.saveToFiles()}>
+              <Button.Label>{t("mobile.chat.message.saveToFiles")}</Button.Label>
+            </Button>
+          </View>
         ) : null}
         {output ? (
           <View className="gap-1.5">

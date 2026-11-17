@@ -207,6 +207,7 @@ import { WHATSAPP_STATUS_REACTIONS_CAPABILITY } from "./whatsapp-status-reaction
 import { WHATSAPP_WORKING_MESSAGE_CAPABILITY } from "./whatsapp-working-message-v1";
 import { WORKFLOWS_CHANNELS_CAPABILITY } from "./workflows-channels-v1";
 import { WORKFLOWS_CHATS_CAPABILITY } from "./workflows-chats-v1";
+import { WORKFLOWS_FILES_CAPABILITY } from "./workflows-files-v1";
 import { WORKFLOWS_GITHUB_CAPABILITY } from "./workflows-github-v1";
 import { WORKFLOWS_HIGGSFIELD_CAPABILITY } from "./workflows-higgsfield-v1";
 import { WORKFLOWS_MEDIA_ACCOUNT_CAPABILITY } from "./workflows-media-account-v1";
@@ -467,6 +468,7 @@ export {
   WORKFLOWS_CAPABILITY,
   WORKFLOWS_CHANNELS_CAPABILITY,
   WORKFLOWS_CHATS_CAPABILITY,
+  WORKFLOWS_FILES_CAPABILITY,
   WORKFLOWS_GITHUB_CAPABILITY,
   WORKFLOWS_HIGGSFIELD_CAPABILITY,
   WORKFLOWS_MEDIA_ACCOUNT_CAPABILITY,
@@ -719,6 +721,7 @@ export const TEAM_CURRENT_CAPABILITIES = [
   TEAM_BROWSER_VIEW_PAGE_COPY_CAPABILITY,
   UI_BLOCK_PREVIEW_EDIT_CAPABILITY,
   WORKFLOWS_MEDIA_CATALOG_CAPABILITY,
+  WORKFLOWS_FILES_CAPABILITY,
 ] as const;
 
 export type TeamCurrentCapability = (typeof TEAM_CURRENT_CAPABILITIES)[number];
@@ -1110,6 +1113,7 @@ export const TEAM_PROTOCOL_V9_ONLY_CAPABILITIES: ReadonlySet<string> = new Set<T
   TEAM_BROWSER_VIEW_PAGE_COPY_CAPABILITY,
   UI_BLOCK_PREVIEW_EDIT_CAPABILITY,
   WORKFLOWS_MEDIA_CATALOG_CAPABILITY,
+  WORKFLOWS_FILES_CAPABILITY,
 ]);
 // A v8 host reads at most 128 capabilities, so a client sends the protocol 9 ones only after it
 // negotiates protocol 9.

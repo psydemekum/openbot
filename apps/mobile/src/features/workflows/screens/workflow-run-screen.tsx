@@ -188,6 +188,7 @@ export function WorkflowRunScreen() {
                 {selectedNode ? (
                   <SettingsSection title={labelOf(selectedNode.id)}>
                     <WorkflowRunStepRow
+                      serverId={serverId}
                       node={selectedNode}
                       step={latest.get(selectedNode.id)}
                       agents={serverAgents}
@@ -216,6 +217,7 @@ export function WorkflowRunScreen() {
                       const node = byId.get(row.id);
                       return node ? (
                         <WorkflowRunStepRow
+                          serverId={serverId}
                           key={node.id}
                           node={node}
                           step={latest.get(node.id)}

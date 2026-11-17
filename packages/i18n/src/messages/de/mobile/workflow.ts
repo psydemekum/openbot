@@ -2,6 +2,14 @@ import type { PartialTranslation } from "../../../message";
 import type { messages as source } from "../../en/mobile/workflow";
 
 export const messages = {
+  "mobile.workflow.file.format": "Format",
+  "mobile.workflow.file.filename": "Dateiname",
+  "mobile.workflow.file.notify": "Nach dem Speichern benachrichtigen",
+  "mobile.workflow.file.hint":
+    "{date} setzt das UTC-Datum ein, {run} den Durchlauf. Jeder Durchlauf behält eine eigene Datei in der Bibliothek.",
+  "mobile.workflow.file.txt": "Text (.txt)",
+  "mobile.workflow.file.md": "Markdown (.md)",
+  "mobile.workflow.file.html": "HTML (.html)",
   "mobile.workflow.unsupported": "Aktualisiere OpenBot auf diesem Server, um Workflows auf deinem Telefon zu nutzen.",
   "mobile.workflow.offline": "Der Server ist offline. Workflows erscheinen, wenn er sich verbindet.",
   "mobile.workflow.list.loading": "Wird geladen…",

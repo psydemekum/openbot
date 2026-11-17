@@ -49,7 +49,6 @@ export function unsupportedNode(node: WorkflowNode): boolean {
   // An asset runs only with a file of the library: its answer is the attachment id of the file.
   if (node.kind === "asset") return fieldText(node, "fileId") === "";
   if (node.kind === "trigger") return node.fields.trigger === "message";
-  if (node.kind === "output") return node.fields.target === "file";
   return false;
 }
 

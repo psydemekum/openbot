@@ -218,7 +218,6 @@ export const messages = {
   "workflow.output.postsAsNote": "Not; görev başlamaz",
   "workflow.output.target.file": "Dosya",
   "workflow.output.target.notify": "Bildirim",
-  "workflow.output.path": "Dosya yolu",
   "workflow.output.sendTo": "Gönderilecek yer",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

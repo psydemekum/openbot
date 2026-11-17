@@ -33,6 +33,9 @@ const RUNTIME_FIELDS: Record<WorkflowNodeKind, readonly string[]> = {
   approval: ["question"],
   output: [
     "target",
+    "format",
+    "filename",
+    "notify",
     "connectionId",
     "placeId",
     "channelId",

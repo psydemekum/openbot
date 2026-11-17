@@ -98,7 +98,8 @@ export type WorkflowFieldValue = string | number | boolean;
  *   connection, so a post needs no place. For `slack`: `connectionId` ("trigger" for the trigger's
  *   workspace), `action` (a `WorkflowSlackAction`), `placeId` (the channel of `post`) and `emoji` (the
  *   emoji of `react`). For `chat-channel`: `channelId`. The result shows in the channel as a note; no
- *   task starts.
+ *   task starts. For `file`: `format` (txt, md, html), `filename` (basename with {{date}},
+ *   {{datum}} or {{run}}), `notify` (boolean). Requires workflows-files-v1; output is a WorkflowFileResult as JSON.
  * - prompt: `text`.
  * - image: `media` (a `WorkflowMediaKind`, "image" when absent), `prompt`, `aspect` (one of
  *   `WORKFLOW_MEDIA_ASPECTS`, or `WORKFLOW_MEDIA_CUSTOM_ASPECT` for an image with `width` and `height`
@@ -582,6 +583,7 @@ export function workflowEdgeProblem(
   edge: WorkflowEdge,
 ): WorkflowGraphProblem | null {
   if (!isWorkflowStepKind(from.kind) || !isWorkflowStepKind(to.kind)) return "annotation";
+  if (to.kind === "output" && to.fields.target === "file" && edge.type !== "text") return "port";
   if (!WORKFLOW_PORTS[from.kind].out.includes(edge.type) || !WORKFLOW_PORTS[to.kind].in.includes(edge.type))
     return "port";
   if (from.kind === "condition") return edge.branch === undefined ? "condition-branch" : null;

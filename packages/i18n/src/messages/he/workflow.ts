@@ -212,7 +212,6 @@ export const messages = {
   "workflow.output.postsAsNote": "הערה; אף משימה לא מתחילה",
   "workflow.output.target.file": "קובץ",
   "workflow.output.target.notify": "התראה",
-  "workflow.output.path": "נתיב הקובץ",
   "workflow.output.sendTo": "שליחה אל",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

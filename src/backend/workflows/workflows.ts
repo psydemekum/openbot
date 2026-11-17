@@ -29,6 +29,7 @@
 
 import { isAgentProvider } from "@openbot/contracts/agent-providers";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { WorkflowFileResult } from "@openbot/contracts/ipc";
 import {
   type AgentEvent,
   type AgentReasoningEffort,
@@ -104,6 +105,7 @@ import {
   discordTriggerMessage,
   workflowDiscordPayload,
 } from "./discord-matching";
+import { workflowFileOutput } from "./file-output";
 import {
   type GitHubEventFacts,
   githubEventFacts,
@@ -266,6 +268,12 @@ export interface WorkflowsDependencies {
    * host keeps no files: an agent step with files before it then fails.
    */
   filePath?: (attachmentId: string) => Effect.Effect<string | null, { readonly cause: unknown }>;
+  /** Keeps a text export as a host attachment. */
+  storeFile?: (input: {
+    bytes: Uint8Array;
+    name: string;
+    mimeType: string;
+  }) => Effect.Effect<{ id: string; name: string; mimeType: string; size: number }, { readonly cause: unknown }>;
   /** Ends a delivery: cancels it while it waits, or interrupts the turn that answers it. */
   stopDelivery(agentId: string, deliveryId: string): Effect.Effect<void, { readonly cause: unknown }>;
   /** One tool-less generation; the failure is a message the user can read. */
@@ -1125,10 +1133,45 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
             yield* sendChannelNote(step, node);
             return runs.step(step.id)?.status !== "running";
           }
+          if (node && fieldText(node, "target") === "file")
+            return settle(step, { status: "failed", error: sourceText("error.workflow.fileInterrupted") });
           if (!node || fieldText(node, "target") !== "github") return yield* resumeOutput(step);
           yield* sendGitHub(step, node, run);
           return runs.step(step.id)?.status !== "running";
         });
+
+        const saveFile = Effect.fn("Workflows.saveFile")(function* (step: StoredWorkflowStep, node: WorkflowNode) {
+          const prepared = workflowFileOutput(
+            node.fields,
+            step.input,
+            (step.startedAt ?? now().toISOString()).slice(0, 10),
+            step.runId ?? step.id,
+          );
+          if ("error" in prepared) {
+            settle(step, { status: "failed", error: prepared.error });
+            return;
+          }
+          if (!dependencies.storeFile) {
+            settle(step, { status: "failed", error: sourceText("error.workflow.fileUnavailable") });
+            return;
+          }
+          const stored = yield* Effect.result(dependencies.storeFile(prepared));
+          if (stored._tag === "Failure") {
+            logger.warn("A workflow file could not be stored.", { stepId: step.id });
+            settle(step, { status: "failed", error: sourceText("error.workflow.fileFailed") });
+            return;
+          }
+          const { id, name, mimeType, size } = stored.success;
+          const file: WorkflowFileResult = { type: "workflow-file", id, name, mimeType, size };
+          settle(step, { status: "done", output: JSON.stringify(file) });
+          if (node.fields.notify === true)
+            dependencies.notify({
+              kind: "output",
+              workflowId: step.workflowId,
+              workflowTitle: titleOf(step.workflowId),
+              text: file.name,
+            });
+        }, Effect.uninterruptible);
 
         /** Does what a new running step of `node` does. */
         const execute = Effect.fn("Workflows.execute")(function* (
@@ -1172,6 +1215,10 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
               }
               return;
             case "output":
+              if (fieldText(node, "target") === "file") {
+                yield* saveFile(step, node);
+                return;
+              }
               if (fieldText(node, "target") === "channel") {
                 yield* sendOutput(step, node);
                 return;

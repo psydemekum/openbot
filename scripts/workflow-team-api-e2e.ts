@@ -48,6 +48,7 @@ import type {
   WorkflowMediaPriceRequest,
   WorkflowNode,
 } from "@openbot/contracts/ipc";
+import { WORKFLOWS_FILES_CAPABILITY, workflowFileResult } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   TEAM_APP_VERSION_HEADER,
@@ -353,6 +354,7 @@ async function startHost(): Promise<Host> {
         }),
       stopDelivery: () => Effect.void,
       generateText: () => Effect.fail({ message: "No model step runs in this check." }),
+      storeFile: (input) => mailbox.storeGeneratedAttachment(input),
       // As the app does: the mailbox keeps the draft as a file with no owner agent.
       keepPicture: (draftId, types) =>
         mailbox.keepDraft(draftId, types).pipe(Effect.map((kept) => (typeof kept === "string" ? kept : kept.id))),
@@ -667,7 +669,7 @@ async function settled(runId: string, nodeId: string) {
 let requests = 0;
 const requestId = () => `request-${++requests}`;
 
-try {
+async function runChecks() {
   host = await startHost();
   const ownerToken = await login(OWNER);
 
@@ -1488,6 +1490,54 @@ try {
     },
   );
 
+  await step("files: a joined client downloads a run's UTF-8 HTML file through the attachment route", async () => {
+    assert.ok(teamCapabilitiesForProtocol(TEAM_PROTOCOL_V9).includes(WORKFLOWS_FILES_CAPABILITY));
+    assert.ok(!teamCapabilitiesForProtocol(TEAM_PROTOCOL_V7).includes(WORKFLOWS_FILES_CAPABILITY));
+    assert.ok(!teamCapabilitiesForProtocol(8).includes(WORKFLOWS_FILES_CAPABILITY));
+    const workflow = await hostWorkflow("HTML report", {
+      nodes: [
+        { ...promptNode, fields: { text: "Grüezi Zürich <report>" } },
+        {
+          id: "file",
+          kind: "output",
+          at: at(300),
+          fields: { target: "file", format: "html", filename: "report-{{date}}" },
+        },
+      ],
+      edges: [{ id: "edge", from: "prompt", to: "file", type: "text" }],
+      strokes: [],
+    });
+    const started = await ok(WORKFLOWS_ROUTES.startRun, ownerToken, {
+      workflowId: workflow.id,
+      requestId: requestId(),
+    });
+    const runId = text(record(started.run, "run").id, "run id");
+    const done = await settled(runId, "file");
+    assert.equal(done.status, "done", JSON.stringify(done.error));
+    const wireRun = await ok(WORKFLOWS_ROUTES.run, ownerToken, { runId });
+    const output = list(wireRun.steps, "steps")
+      .map((entry) => record(entry, "step"))
+      .find((entry) => entry.nodeId === "file");
+    const result = workflowFileResult(text(output?.output, "file result"));
+    assert.ok(result);
+    const file = await fetch(`http://127.0.0.1:${current().port}${TEAM_API_ROUTES.attachment(result.id)}`, {
+      headers: v9Headers(member),
+    });
+    assert.equal(file.status, 200);
+    assert.equal(file.headers.get("content-type"), "text/html");
+    assert.match(file.headers.get("content-disposition") ?? "", /attachment;/);
+    assert.match(await file.text(), /Grüezi Zürich &lt;report&gt;/);
+    const unauthenticated = await call("GET", TEAM_API_ROUTES.attachment(result.id), { protocol: TEAM_PROTOCOL_V9 });
+    assert.equal(unauthenticated.status, 401);
+    return { run: done.status, download: file.status, unauthenticated: unauthenticated.status, name: result.name };
+  });
+
+  // The file suite includes the access checks above, but needs no installed model CLI.
+  if (process.argv.includes("--files")) {
+    report.unverified.push("Provider-dependent media checks were not selected (--files).");
+    return;
+  }
+
   await step(
     "media account: the host advertises workflows-media-account-v1; an unknown account fails and never falls back",
     async () => {
@@ -1778,13 +1828,21 @@ try {
       }
     },
   );
+}
 
+try {
+  await runChecks();
   report.passed = true;
 } finally {
   for (const socket of sockets) socket.close();
   await stopHost();
   mkdirSync(OUT, { recursive: true });
   writeFileSync(join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-  await rm(root, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (process.platform !== "win32" || error.code !== "EBUSY") throw error;
+      process.stderr.write(`Windows still holds the temporary profile; remove it after this process exits: ${root}\n`);
+    },
+  );
   process.stdout.write(`${report.passed ? "passed" : "FAILED"}: ${join(OUT, "report.json")}\n`);
 }

@@ -230,7 +230,6 @@ export const messages = {
   "workflow.output.postsAsNote": "Notatka; żadne zadanie się nie zaczyna",
   "workflow.output.target.file": "Plik",
   "workflow.output.target.notify": "Powiadomienie",
-  "workflow.output.path": "Ścieżka pliku",
   "workflow.output.sendTo": "Wyślij do",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

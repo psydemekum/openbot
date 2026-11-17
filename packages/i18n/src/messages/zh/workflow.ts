@@ -218,7 +218,6 @@ export const messages = {
   "workflow.output.postsAsNote": "备注；不会开始任务",
   "workflow.output.target.file": "文件",
   "workflow.output.target.notify": "通知",
-  "workflow.output.path": "文件路径",
   "workflow.output.sendTo": "发送到",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

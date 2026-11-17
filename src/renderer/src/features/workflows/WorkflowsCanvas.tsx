@@ -153,6 +153,9 @@ export function WorkflowsCanvas(props: {
     get media() {
       return props.host.mediaSupported() ? props.host.mediaUrl : undefined;
     },
+    get downloadFile() {
+      return props.host.filesSupported() ? props.host.downloadFile : undefined;
+    },
     // The Library pictures that an asset step can use. A picture with no preview address, as the
     // browser gets, reads its file only when the canvas shows it.
     get files() {
@@ -184,6 +187,7 @@ export function WorkflowsCanvas(props: {
     const telegram = props.admin && workflows.telegram().length > 0;
     const slack = props.admin && workflows.slack().length > 0;
     const outputs = [
+      ...(props.host.filesSupported() ? (["file"] as const) : []),
       ...WORKFLOW_FEATURES_V1.outputs.filter((output) => output !== "channel" || workflows.places().length > 0),
       ...(workflows.channels().length > 0 ? (["chat-channel"] as const) : []),
     ];

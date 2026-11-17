@@ -2,6 +2,15 @@ import type { PartialTranslation } from "../../message";
 import type { messages as source } from "../en/workflow";
 
 export const messages = {
+  "workflow.output.formatTxt": "Text (.txt)",
+  "workflow.output.formatMd": "Markdown (.md)",
+  "workflow.output.formatHtml": "HTML (.html)",
+  "workflow.output.format": "Format",
+  "workflow.output.filename": "Dateiname",
+  "workflow.output.filenameHint":
+    "{date} setzt das UTC-Datum ein, {run} den Durchlauf. Jeder Durchlauf behält eine eigene Datei in der Bibliothek.",
+  "workflow.output.alsoNotify": "Nach dem Speichern benachrichtigen",
+  "workflow.output.fileSaved": "Gespeichert: {name}",
   "workflow.board.port.text": "Text",
   "workflow.board.port.image": "Bild",
   "workflow.board.port.file": "Datei",
@@ -218,7 +227,6 @@ export const messages = {
   "workflow.output.postsAsNote": "Notiz; keine Aufgabe startet",
   "workflow.output.target.file": "Datei",
   "workflow.output.target.notify": "Benachrichtigung",
-  "workflow.output.path": "Dateipfad",
   "workflow.output.sendTo": "Senden an",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

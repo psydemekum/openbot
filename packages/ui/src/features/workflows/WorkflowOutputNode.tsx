@@ -1,13 +1,15 @@
 /** An output: the end of a branch, which sends the result. */
 
+import { WORKFLOW_FILE_FORMATS, type WorkflowFileFormat, workflowFileResult } from "@openbot/contracts/ipc";
 import type { AppTranslate } from "@openbot/i18n";
 import { Bell, Button, CircleCheck, FileText, Hash, Play, Send, Skeleton } from "@openbot/ui";
-import { Show, untrack } from "solid-js";
+import { createSignal, Show, untrack } from "solid-js";
 import { useText } from "../../text";
 import { resultValue, useBoard, type WfnPortType } from "./workflow-board";
 import { DISCORD_OUTPUT_DEFAULTS, DiscordIcon, DiscordOutputRows } from "./workflow-discord-parts";
 import { GITHUB_OUTPUT_DEFAULTS, GitHubIcon, GitHubOutputRows, useGitHubOutputReady } from "./workflow-github-parts";
 import {
+  asBoolean,
   type Choice,
   FailureAlert,
   NodeShell,
@@ -74,7 +76,7 @@ export function OutputNode(props: {
   title?: string;
 }) {
   const board = useBoard();
-  const { t } = useText();
+  const { t, errorMessage } = useText();
   const [target, setTarget] = useField<OutputTarget>(
     () => props.id,
     "target",
@@ -108,11 +110,14 @@ export function OutputNode(props: {
     if (value === "channel" && (isChannel() || outputs?.includes("chat-channel"))) return true;
     return HOST_TARGETS.includes(value) ? outputs?.includes(value) === true : (outputs?.includes(value) ?? true);
   };
-  const [path, setPath] = useTextField(
+  const [filename, setFilename] = useTextField(() => props.id, "filename", "");
+  const [format, setFormat] = useField<WorkflowFileFormat>(
     () => props.id,
-    "path",
-    untrack(() => props.path ?? ""),
+    "format",
+    "txt",
+    oneOf(WORKFLOW_FILE_FORMATS),
   );
+  const [notify, setNotify] = useField(() => props.id, "notify", false, asBoolean);
   const [title, setTitle] = useTextField(
     () => props.id,
     "title",
@@ -122,10 +127,24 @@ export function OutputNode(props: {
   const run = useStepRun(untrack(() => props.id));
   const githubReady = useGitHubOutputReady(() => props.id);
   const isGitHub = () => target() === "github";
-  const inputs = () => (HOST_TARGETS.includes(target()) ? TEXT_INPUTS : OUTPUT_INPUTS);
+  const inputs = () => (HOST_TARGETS.includes(target()) || target() === "file" ? TEXT_INPUTS : OUTPUT_INPUTS);
   const runDisabled = () =>
     locked() || !inputs().some((type) => board.connected(props.id, "in", type)) || (isGitHub() && !githubReady());
   const shown = () => resultValue(board.shown(props.id));
+  const file = () => (target() === "file" ? workflowFileResult(shown()) : undefined);
+  const [saving, setSaving] = createSignal({ busy: false, error: "" });
+  const save = async () => {
+    const value = file();
+    const download = board.catalogs().downloadFile;
+    if (!value || !download || saving().busy) return;
+    setSaving({ busy: true, error: "" });
+    try {
+      await download(value);
+      setSaving({ busy: false, error: "" });
+    } catch (error) {
+      setSaving({ busy: false, error: errorMessage(error, t("error.workflow.fileFailed")) });
+    }
+  };
   return (
     <NodeShell
       action={
@@ -178,7 +197,36 @@ export function OutputNode(props: {
           </SettingsFoot>
         </Show>
         <Show when={target() === "file"}>
-          <InputRow name={t("workflow.output.path")} value={path()} disabled={locked()} onChange={setPath} />
+          <SettingRow
+            name={t("workflow.output.format")}
+            value={format()}
+            disabled={locked()}
+            onChange={setFormat}
+            choices={[
+              { value: "txt", label: t("workflow.output.formatTxt"), icon: () => <FileText aria-hidden="true" /> },
+              { value: "md", label: t("workflow.output.formatMd"), icon: () => <FileText aria-hidden="true" /> },
+              { value: "html", label: t("workflow.output.formatHtml"), icon: () => <FileText aria-hidden="true" /> },
+            ]}
+          />
+          <InputRow
+            name={t("workflow.output.filename")}
+            value={filename()}
+            disabled={locked()}
+            onChange={setFilename}
+          />
+          <SettingRow
+            name={t("workflow.output.alsoNotify")}
+            value={notify() ? "yes" : "no"}
+            disabled={locked()}
+            onChange={(value) => setNotify(value === "yes")}
+            choices={[
+              { value: "yes", label: t("workflow.board.branch.yes"), icon: () => <Bell aria-hidden="true" /> },
+              { value: "no", label: t("workflow.board.branch.no"), icon: () => <Bell aria-hidden="true" /> },
+            ]}
+          />
+          <SettingsFoot>
+            <p class="wfn-settings-help">{t("workflow.output.filenameHint", { date: "{{date}}", run: "{{run}}" })}</p>
+          </SettingsFoot>
         </Show>
         <Show when={target() === "notify"}>
           <InputRow
@@ -214,9 +262,21 @@ export function OutputNode(props: {
         {(value) => (
           <p class="wfn-alert" data-tone="success" data-stale={run.running() ? "" : undefined}>
             <CircleCheck aria-hidden="true" />
-            <span class="wfn-alert-text">{value()}</span>
+            <span class="wfn-alert-text">
+              {file() ? t("workflow.output.fileSaved", { name: file()?.name ?? "" }) : value()}
+            </span>
           </p>
         )}
+      </Show>
+      <Show when={file() && board.catalogs().downloadFile}>
+        <Button fullWidth disabled={saving().busy} onClick={save}>
+          {t("workflow.node.toolbar.download")}
+        </Button>
+      </Show>
+      <Show when={saving().error}>
+        <p class="wfn-alert" role="alert">
+          {saving().error}
+        </p>
       </Show>
     </NodeShell>
   );

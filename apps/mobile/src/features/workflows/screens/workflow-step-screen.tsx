@@ -21,6 +21,7 @@ import {
   useChatAccess,
 } from "@/features/workflows/components/workflow-chat-fields";
 import { DiscordOutputFields } from "@/features/workflows/components/workflow-discord-fields";
+import { FileOutputFields } from "@/features/workflows/components/workflow-file-fields";
 import { GitHubOutputFields } from "@/features/workflows/components/workflow-github-fields";
 import { useWorkflowGitHubSupported } from "@/features/workflows/model/use-workflows";
 import {
@@ -235,17 +236,18 @@ function OutputChoice({ node, draft }: { node: WorkflowNode; draft: WorkflowDraf
   const githubSupported = useWorkflowGitHubSupported(draft.serverId);
   const chats = useChatAccess(draft);
   const target = text(node, "target");
+  const filesSupported = useMobileWorkspaceSelector((current) => current.canUseWorkflowFiles(draft.serverId));
   const shown =
     target === "channel" || target === "chat-channel" || target === "file" || target === "discord" ? target : null;
   const notify = shown === null && target !== "github" && target !== "telegram" && target !== "slack";
   const telegramOffered = chats.editable && telegramChats(chats.options ?? []).length > 0;
   const slackOffered = chats.editable && slackWorkspaces(chats.options ?? []).length > 0;
   const check = (on: boolean) => (on ? <Check size={18} color={accent} strokeWidth={2} /> : null);
-  const choose = (next: "notify" | keyof typeof TARGET_DEFAULTS) => {
+  const choose = (next: "notify" | "file" | keyof typeof TARGET_DEFAULTS) => {
     if (next === target || (next === "notify" && notify)) return;
     void haptics.selection();
-    if (next === "notify") {
-      setFields(node.id, { target: "notify", connectionId: undefined, placeId: undefined });
+    if (next === "notify" || next === "file") {
+      setFields(node.id, { target: next, connectionId: undefined, placeId: undefined });
       return;
     }
     // A GitHub, Discord, Telegram or Slack output keeps an `action`, so a change from one to another writes
@@ -296,7 +298,17 @@ function OutputChoice({ node, draft }: { node: WorkflowNode; draft: WorkflowDraf
       ) : null}
       {chatRow("telegram", telegramOffered, "mobile.workflow.output.telegram", "mobile.workflow.output.telegramHint")}
       {chatRow("slack", slackOffered, "mobile.workflow.output.slack", "mobile.workflow.output.slackHint")}
-      {shown ? (
+      {filesSupported ? (
+        <SettingsRow
+          checked={target === "file"}
+          disclosure={false}
+          trailing={check(target === "file")}
+          onPress={() => choose("file")}
+        >
+          <Typography.Paragraph>{t("mobile.workflow.output.file")}</Typography.Paragraph>
+        </SettingsRow>
+      ) : null}
+      {shown && !(shown === "file" && filesSupported) ? (
         <SettingsRow checked disclosure={false} trailing={check(true)}>
           <Typography.Paragraph>{t(SHOWN_TARGET_LABEL[shown])}</Typography.Paragraph>
         </SettingsRow>
@@ -419,6 +431,7 @@ export function WorkflowStepScreen() {
       {node.kind === "output" ? (
         <>
           <OutputChoice node={node} draft={draft} />
+          {text(node, "target") === "file" ? <FileOutputFields node={node} draft={draft} /> : null}
           {text(node, "target") === "github" ? <GitHubOutputFields node={node} draft={draft} /> : null}
           {text(node, "target") === "discord" ? <DiscordOutputFields node={node} /> : null}
           {text(node, "target") === "telegram" ? <TelegramOutputFields node={node} draft={draft} /> : null}

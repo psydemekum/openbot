@@ -215,7 +215,6 @@ export const messages = {
   "workflow.output.postsAsNote": "メモ（タスクは開始されません）",
   "workflow.output.target.file": "ファイル",
   "workflow.output.target.notify": "通知",
-  "workflow.output.path": "ファイルのパス",
   "workflow.output.sendTo": "送信先",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

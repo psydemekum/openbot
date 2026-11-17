@@ -2,6 +2,13 @@ import { defineMessages } from "../../../message";
 
 /** Errors that the workflow store and runtime send. */
 export const messages = defineMessages("error.workflow", {
+  "error.workflow.fileFormat": "Choose TXT, Markdown or HTML for this file.",
+  "error.workflow.fileName":
+    "Use a file name without folders or special characters, with only the date and run placeholders.",
+  "error.workflow.fileUnavailable": "This host cannot store workflow files.",
+  "error.workflow.fileFailed": "The workflow file could not be saved. Check available storage and try again.",
+  "error.workflow.fileInterrupted":
+    "OpenBot stopped while saving this file. Check the Library before running it again.",
   "error.workflow.missing": "This workflow no longer exists.",
   "error.workflow.versionMissing": "This version of the workflow no longer exists.",
   "error.workflow.annotation": "Text, notes and shapes cannot have connections.",

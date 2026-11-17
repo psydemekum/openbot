@@ -207,7 +207,6 @@ export const messages = {
   "workflow.output.postsAsNote": "Een notitie; er start geen taak",
   "workflow.output.target.file": "Bestand",
   "workflow.output.target.notify": "Melding",
-  "workflow.output.path": "Bestandspad",
   "workflow.output.sendTo": "Sturen naar",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

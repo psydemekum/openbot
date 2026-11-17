@@ -9,6 +9,7 @@ import {
   type AttachmentSummary,
   STORAGE_CAPABILITY,
   type TeamRealtimeEvent,
+  WORKFLOWS_FILES_CAPABILITY,
   type WorkflowMediaKind,
 } from "@openbot/contracts/ipc";
 import { AGENT_ACCESS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-access-v1";
@@ -82,6 +83,8 @@ import { Effect } from "effect";
 import type { GitHubConnectorPort } from "../connectors/github-connector-port";
 import { checkPicture, keptPicture, libraryPictures, type WorkflowHost } from "../workflows/workflows-port";
 import { openWebLink } from "./web-attachments";
+import { createWebFileSaver } from "./web-file-download";
+import type { WebFile } from "./web-runtime";
 
 /**
  * Each value is read on each call, so one host serves each server that the tab connects to. The page
@@ -101,6 +104,7 @@ export interface WebWorkflowHostOptions {
   githubConnector: GitHubConnectorPort;
   /** The object URLs of the chat's host files. A media step shows its file through them. */
   attachmentMedia: AttachmentMediaSource | undefined;
+  downloadFile: (id: string) => Promise<WebFile>;
 }
 
 /** The host sends only the id of a media step's file, so the name and type come from the step kind. */
@@ -118,6 +122,7 @@ function mediaSummary(id: string, kind: WorkflowMediaKind): AttachmentSummary {
 }
 
 export function webWorkflowHost(options: WebWorkflowHostOptions): WorkflowHost {
+  const saveFile = createWebFileSaver();
   const has = (capability: string) => options.capabilities().includes(capability);
   /** Only an owner or admin reads the host's connections (`routine-results-v1`). */
   const placesSupported = () => options.admin() && has(ROUTINE_RESULTS_CAPABILITY);
@@ -302,6 +307,10 @@ export function webWorkflowHost(options: WebWorkflowHostOptions): WorkflowHost {
       return keptPicture(fileId, file, null);
     },
     githubSupported,
+    filesSupported: () => has(WORKFLOWS_FILES_CAPABILITY),
+    async downloadFile(file) {
+      saveFile(await options.downloadFile(file.id));
+    },
     mediaSupported: () => has(WORKFLOWS_MEDIA_CAPABILITY),
     mediaAccountSupported: () => has(WORKFLOWS_MEDIA_CAPABILITY) && has(WORKFLOWS_MEDIA_ACCOUNT_CAPABILITY),
     mediaTransparentSupported: () => has(WORKFLOWS_MEDIA_CAPABILITY) && has(WORKFLOWS_MEDIA_TRANSPARENT_CAPABILITY),

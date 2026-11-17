@@ -2646,6 +2646,8 @@ export async function createApplicationServices({
       sendHandoff: (input) => service.enqueueRoutineHandoff(input),
       filePath: (attachmentId) =>
         mailbox.resolveAttachment(attachmentId).pipe(Effect.map((file) => file?.path ?? null)),
+      storeFile: (input) =>
+        mailbox.storeGeneratedAttachment(input).pipe(Effect.ensuring(Effect.sync(() => storageUsage.invalidate()))),
       stopDelivery: stopHandoff,
       generateText: (request) =>
         service.generateWorkflowText(request).pipe(

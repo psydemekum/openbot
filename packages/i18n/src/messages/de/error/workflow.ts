@@ -2,6 +2,14 @@ import type { PartialTranslation } from "../../../message";
 import type { messages as source } from "../../en/error/workflow";
 
 export const messages = {
+  "error.workflow.fileFormat": "Wähle TXT, Markdown oder HTML für diese Datei.",
+  "error.workflow.fileName":
+    "Verwende einen Dateinamen ohne Ordner oder Sonderzeichen und nur die Platzhalter für Datum und Durchlauf.",
+  "error.workflow.fileUnavailable": "Dieser Host kann keine Workflow-Dateien speichern.",
+  "error.workflow.fileFailed":
+    "Die Workflow-Datei konnte nicht gespeichert werden. Prüfe den freien Speicher und versuche es erneut.",
+  "error.workflow.fileInterrupted":
+    "OpenBot wurde beim Speichern beendet. Prüfe die Bibliothek, bevor du den Schritt erneut ausführst.",
   "error.workflow.missing": "Dieser Workflow existiert nicht mehr.",
   "error.workflow.versionMissing": "Diese Version des Workflows existiert nicht mehr.",
   "error.workflow.annotation": "Texte, Notizen und Formen können keine Verbindungen haben.",

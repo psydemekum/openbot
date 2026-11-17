@@ -1,6 +1,14 @@
 import { defineMessages } from "../../../message";
 
 export const messages = defineMessages("mobile.workflow", {
+  "mobile.workflow.file.format": "Format",
+  "mobile.workflow.file.filename": "File name",
+  "mobile.workflow.file.notify": "Notify when saved",
+  "mobile.workflow.file.hint":
+    "Use {date} for the UTC date and {run} for the run. Each run keeps its own file in the Library.",
+  "mobile.workflow.file.txt": "Text (.txt)",
+  "mobile.workflow.file.md": "Markdown (.md)",
+  "mobile.workflow.file.html": "HTML (.html)",
   "mobile.workflow.unsupported": "Update OpenBot on this server to use workflows on your phone.",
   "mobile.workflow.offline": "The server is offline. Workflows show when it connects.",
   "mobile.workflow.list.loading": "Loading…",

@@ -218,7 +218,6 @@ export const messages = {
   "workflow.output.postsAsNote": "Uma nota; nenhuma tarefa começa",
   "workflow.output.target.file": "Arquivo",
   "workflow.output.target.notify": "Notificação",
-  "workflow.output.path": "Caminho do arquivo",
   "workflow.output.sendTo": "Enviar para",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

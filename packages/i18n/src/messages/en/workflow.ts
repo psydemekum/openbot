@@ -1,6 +1,15 @@
 import { defineMessages } from "../../message";
 
 export const messages = defineMessages("workflow", {
+  "workflow.output.formatTxt": "Text (.txt)",
+  "workflow.output.formatMd": "Markdown (.md)",
+  "workflow.output.formatHtml": "HTML (.html)",
+  "workflow.output.format": "Format",
+  "workflow.output.filename": "File name",
+  "workflow.output.filenameHint":
+    "Use {date} for the UTC date and {run} for the run. Each run keeps its own file in the Library.",
+  "workflow.output.alsoNotify": "Notify when saved",
+  "workflow.output.fileSaved": "Saved: {name}",
   "workflow.board.port.text": "Text",
   "workflow.board.port.image": "Image",
   "workflow.board.port.file": "File",
@@ -217,7 +226,6 @@ export const messages = defineMessages("workflow", {
   "workflow.output.postsAsNote": "A note; no task starts",
   "workflow.output.target.file": "File",
   "workflow.output.target.notify": "Notification",
-  "workflow.output.path": "File path",
   "workflow.output.sendTo": "Send to",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

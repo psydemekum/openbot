@@ -215,7 +215,6 @@ export const messages = {
   "workflow.output.postsAsNote": "메모, 작업이 시작되지 않음",
   "workflow.output.target.file": "파일",
   "workflow.output.target.notify": "알림",
-  "workflow.output.path": "파일 경로",
   "workflow.output.sendTo": "보낼 위치",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

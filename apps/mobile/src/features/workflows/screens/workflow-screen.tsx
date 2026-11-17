@@ -238,6 +238,7 @@ export function WorkflowScreen() {
                   const node = byId.get(step.nodeId);
                   return node ? (
                     <WorkflowRunStepRow
+                      serverId={serverId}
                       key={step.id}
                       node={node}
                       step={step}

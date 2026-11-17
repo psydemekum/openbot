@@ -18,6 +18,7 @@ import { PromptNode } from "@openbot/ui/features/workflows/WorkflowPromptNode";
 import { TextNode } from "@openbot/ui/features/workflows/WorkflowTextNode";
 import { TriggerNode } from "@openbot/ui/features/workflows/WorkflowTriggerNode";
 import type { WorkflowCatalogs } from "@openbot/ui/features/workflows/workflow-model";
+import { download } from "@openbot/ui/features/workflows/workflow-node-parts";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { NodeGallery } from "./workflow-node-gallery";
 import { createStoryPresence } from "./workflow-presence-story";
@@ -351,6 +352,50 @@ export const Output: Story = {
       <OutputNode id="label" target="github" />
       <TriggerNode id="docs" trigger="github" />
       <OutputNode id="review" target="github" />
+    </NodeGallery>
+  ),
+};
+
+/** File results stay tied to their run, even after the settings change. */
+export const FileOutput: Story = {
+  render: () => (
+    <NodeGallery
+      selected="file"
+      catalogs={{
+        ...STORY_CATALOGS,
+        downloadFile: async (file) => download("data:application/octet-stream,Gr%C3%BCezi%20Z%C3%BCrich", file.name),
+      }}
+      edges={[{ id: "source-file", from: "source", to: "file", type: "text" }]}
+      fields={{ file: { target: "file", format: "html", filename: "report-{{date}}", notify: false } }}
+      results={{
+        file: [
+          {
+            id: "file-one",
+            at: todayAt(9, 14),
+            value: JSON.stringify({
+              type: "workflow-file",
+              id: "file-one",
+              name: "report-one.txt",
+              mimeType: "text/plain",
+              size: 14,
+            }),
+          },
+          {
+            id: "file-two",
+            at: todayAt(9, 15),
+            value: JSON.stringify({
+              type: "workflow-file",
+              id: "file-two",
+              name: "report-two.html",
+              mimeType: "text/html",
+              size: 120,
+            }),
+          },
+        ],
+      }}
+    >
+      <PromptNode id="source" text="Grüezi Zürich" />
+      <OutputNode id="file" target="file" />
     </NodeGallery>
   ),
 };

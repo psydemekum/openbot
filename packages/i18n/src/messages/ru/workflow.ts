@@ -230,7 +230,6 @@ export const messages = {
   "workflow.output.postsAsNote": "Заметка; задача не начинается",
   "workflow.output.target.file": "Файл",
   "workflow.output.target.notify": "Уведомление",
-  "workflow.output.path": "Путь к файлу",
   "workflow.output.sendTo": "Куда отправить",
   "workflow.output.target.github": "GitHub",
   "workflow.output.target.discord": "Discord",

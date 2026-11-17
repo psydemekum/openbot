@@ -8,6 +8,8 @@ import {
   type StorageUsage,
   type StoredFileRow,
   WORKFLOW_PICTURE_TYPES,
+  WORKFLOWS_FILES_CAPABILITY,
+  type WorkflowFileResult,
   type WorkflowMediaKind,
 } from "@openbot/contracts/ipc";
 import { WORKFLOWS_MEDIA_ACCOUNT_CAPABILITY } from "@openbot/contracts/team-protocol/workflows-media-account-v1";
@@ -105,6 +107,8 @@ export interface WorkflowHost {
    * host reads them as the first aspect ratio of the model.
    */
   mediaSizeSupported(): boolean;
+  filesSupported(): boolean;
+  downloadFile(file: WorkflowFileResult): Promise<void>;
   /**
    * The pictures of the host's Library that an asset step can use: this computer's, or a joined
    * server's when it serves `storage-v1`. The host gives a member only the files of the agents that
@@ -349,6 +353,10 @@ export function desktopWorkflowHost(serverId: string, server: () => ServerSummar
     mediaAccountSupported,
     mediaTransparentSupported,
     mediaSizeSupported,
+    filesSupported: () => local() || serverSupportsCapability(server(), WORKFLOWS_FILES_CAPABILITY),
+    downloadFile: async (file) => {
+      await window.openbot.storage.openFile({ fileId: file.id, action: "save" }, serverId);
+    },
     mediaUrl,
     get githubConnector() {
       return local() ? githubConnectorPort() : hostGitHub;

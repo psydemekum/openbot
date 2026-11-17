@@ -1349,6 +1349,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
     },
     githubConnector: githubPort,
     attachmentMedia: runtime.attachmentMedia,
+    downloadFile: (id) => workspace.runtime.download(id),
   });
   // As on desktop: the rail shows the Sunra and Higgsfield credits of the host while the Canvas page is open.
   const mediaCredits = createWorkflowMediaCredits(
