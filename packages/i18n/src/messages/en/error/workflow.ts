@@ -2,6 +2,8 @@ import { defineMessages } from "../../../message";
 
 /** Errors that the workflow store and runtime send. */
 export const messages = defineMessages("error.workflow", {
+  "error.workflow.fileTooLarge":
+    "This file exceeds the workflow input limit of {limit} characters. Split the input into smaller files.",
   "error.workflow.fileFormat": "Choose TXT, Markdown or HTML for this file.",
   "error.workflow.fileName":
     "Use a file name without folders or special characters, with only the date and run placeholders.",

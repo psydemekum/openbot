@@ -1,9 +1,24 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { WORKFLOW_FILE_MIME, type WorkflowFields } from "@openbot/contracts/ipc";
 import { sourceText } from "@openbot/i18n/source";
 import { redactSecrets } from "@openbot/logging";
 
+/** Keep one extra code unit to distinguish an oversized export from an exact fit when the step runs. */
+export function workflowFileInput(parts: readonly string[]): string {
+  const bound = INPUT_LIMITS.workflowStepInput + 1;
+  let text = "";
+  for (const [index, part] of parts.entries()) {
+    if (index) text += "\n\n".slice(0, bound - text.length);
+    text += part.slice(0, bound - text.length);
+    if (text.length === bound) break;
+  }
+  return text;
+}
+
 /** Prepares text bytes for the managed attachment store; never accepts a filesystem path. */
 export function workflowFileOutput(fields: WorkflowFields, input: string, date: string, run: string) {
+  if (input.length > INPUT_LIMITS.workflowStepInput)
+    return { error: sourceText("error.workflow.fileTooLarge", { limit: INPUT_LIMITS.workflowStepInput }) };
   const format = fields.format ?? "txt";
   if (format !== "txt" && format !== "md" && format !== "html")
     return { error: sourceText("error.workflow.fileFormat") };

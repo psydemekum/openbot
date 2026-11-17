@@ -2,6 +2,8 @@ import type { PartialTranslation } from "../../../message";
 import type { messages as source } from "../../en/error/workflow";
 
 export const messages = {
+  "error.workflow.fileTooLarge":
+    "Die Eingabe überschreitet das Workflow-Limit von {limit} Zeichen. Teile sie auf mehrere Dateien auf.",
   "error.workflow.fileFormat": "Wähle TXT, Markdown oder HTML für diese Datei.",
   "error.workflow.fileName":
     "Verwende einen Dateinamen ohne Ordner oder Sonderzeichen und nur die Platzhalter für Datum und Durchlauf.",

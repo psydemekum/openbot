@@ -105,7 +105,7 @@ import {
   discordTriggerMessage,
   workflowDiscordPayload,
 } from "./discord-matching";
-import { workflowFileOutput } from "./file-output";
+import { workflowFileInput, workflowFileOutput } from "./file-output";
 import {
   type GitHubEventFacts,
   githubEventFacts,
@@ -1261,6 +1261,7 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
          * apart from the trigger's event for a GitHub output.
          */
         const stepInput = (node: WorkflowNode, workflowId: string, inputs: readonly string[]) => {
+          if (node.kind === "output" && fieldText(node, "target") === "file") return workflowFileInput(inputs);
           if (node.kind === "output" && fieldText(node, "target") === "github") return githubOutputInput(inputs);
           const text = inputText(inputs);
           return node.kind === "agent" ? agentStepText(titleOf(workflowId), fieldText(node, "task"), text) : text;

@@ -4,6 +4,9 @@ An output node with target `file` stores the text from its incoming steps as a m
 The node takes text inputs. The host writes UTF-8 and keeps one attachment per execution, including
 empty input. Matching names do not overwrite earlier files.
 
+File inputs preserve leading spaces and final line breaks. Multiple inputs are joined with two line
+breaks in edge order. Input above the workflow step limit (32,000 UTF-16 code units) fails before writing.
+
 ## Fields
 
 | Field | Values |
@@ -26,6 +29,8 @@ Secret redaction runs before storage. The canvas downloads HTML; it never insert
 The existing step output stores a JSON file descriptor: `type`, `id`, `name`, `mimeType`, `size`.
 The id uses the existing attachment storage and authenticated download route. No database migration
 or new filesystem endpoint is needed. Downloads use the saved file name, even after the node is edited.
+The usual attachment access rules apply: a signed-in server member who knows the file id can download it.
+Members discover the id through workflow results they can read. The host owner can also find it in the Library.
 The result selector gives access to older runs. Files stay in the Library until the user deletes them.
 
 The optional `workflows-files-v1` capability exposes the feature only on supporting hosts, on protocol 9.

@@ -1514,7 +1514,7 @@ async function runChecks() {
     const runId = text(record(started.run, "run").id, "run id");
     const done = await settled(runId, "file");
     assert.equal(done.status, "done", JSON.stringify(done.error));
-    const wireRun = await ok(WORKFLOWS_ROUTES.run, ownerToken, { runId });
+    const wireRun = await ok(WORKFLOWS_ROUTES.run, member, { runId });
     const output = list(wireRun.steps, "steps")
       .map((entry) => record(entry, "step"))
       .find((entry) => entry.nodeId === "file");
@@ -1525,7 +1525,10 @@ async function runChecks() {
     });
     assert.equal(file.status, 200);
     assert.equal(file.headers.get("content-type"), "text/html");
-    assert.match(file.headers.get("content-disposition") ?? "", /attachment;/);
+    assert.equal(
+      file.headers.get("content-disposition"),
+      `attachment; filename*=UTF-8''${encodeURIComponent(result.name)}`,
+    );
     assert.match(await file.text(), /Grüezi Zürich &lt;report&gt;/);
     const unauthenticated = await call("GET", TEAM_API_ROUTES.attachment(result.id), { protocol: TEAM_PROTOCOL_V9 });
     assert.equal(unauthenticated.status, 401);

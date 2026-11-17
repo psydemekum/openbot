@@ -37,8 +37,14 @@ async function waitForStep(workflows: WorkflowsHandle, runId: string): Promise<W
   }
 }
 
-async function run(text: string, fields: WorkflowFields) {
+async function run(text: string | string[], fields: WorkflowFields) {
   assert.ok(service);
+  const prompts = (typeof text === "string" ? [text] : text).map((value, index) => ({
+    id: `prompt-${index}`,
+    kind: "prompt" as const,
+    at: { x: 0, y: index * 150 },
+    fields: { text: value },
+  }));
   const created = await runCauseEffect(service.create({ title: "File output check" }));
   const saved = await runCauseEffect(
     service.saveGraph({
@@ -46,10 +52,10 @@ async function run(text: string, fields: WorkflowFields) {
       baseRevision: created.revision,
       graph: {
         nodes: [
-          { id: "prompt", kind: "prompt", at: { x: 0, y: 0 }, fields: { text } },
+          ...prompts,
           { id: "output", kind: "output", at: { x: 300, y: 0 }, fields: { target: "file", ...fields } },
         ],
-        edges: [{ id: "edge", from: "prompt", to: "output", type: "text" }],
+        edges: prompts.map(({ id }) => ({ id: `edge-${id}`, from: id, to: "output", type: "text" })),
         strokes: [],
       },
     }),
@@ -131,6 +137,13 @@ try {
   assert.notEqual(again.result.id, plain.result.id);
   assert.equal((await contents(await run("", { format: "txt" }))).text, "");
   checks.push("Runs keep separate files, including empty text");
+  const verbatim = "    Grüezi\r\n\r\n";
+  assert.equal((await contents(await run(verbatim, {}))).text, verbatim);
+  assert.equal((await contents(await run(["first", "  second\n"], {}))).text, "first\n\n  second\n");
+  const beforeOversize = writes;
+  assert.equal((await run(["a".repeat(18_000), "b".repeat(18_000)], {})).status, "failed");
+  assert.equal(writes, beforeOversize);
+  checks.push("File input preserves whitespace and rejects oversized exports without writing a partial file");
   const invalid: WorkflowFields[] = [
     { filename: "../escape" },
     { filename: "C:\\escape" },

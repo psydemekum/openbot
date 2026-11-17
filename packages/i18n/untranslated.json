@@ -9,6 +9,7 @@
   "workflow.output.formatTxt": ["ar", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "workflow.output.formatMd": ["ar", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "workflow.output.formatHtml": ["ar", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
+  "error.workflow.fileTooLarge": ["ar", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "error.workflow.fileFormat": ["ar", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "error.workflow.fileName": ["ar", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "error.workflow.fileUnavailable": ["ar", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
