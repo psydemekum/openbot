@@ -121,7 +121,7 @@ jobs:
         shell: bash
         run: |
           bun scripts/workflow-file-output-e2e.ts
-          bun scripts/workflow-team-api-e2e.ts
+          bun scripts/workflow-team-api-e2e.ts --files
 
       - name: Build the Windows application
         if: steps.release.outputs.build == 'true'
