@@ -1,0 +1,9 @@
+extends: ./electron-builder.yml
+forceCodeSigning: true
+publish:
+  - provider: github
+    owner: psydemekum
+    repo: openbot
+win:
+  signtoolOptions:
+    publisherName: OpenBot Fork psydemekum

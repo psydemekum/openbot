@@ -3245,6 +3245,7 @@ export async function createApplicationServices({
   let requestedUpdate: RequestedUpdate | undefined;
   const installationMode =
     app.isPackaged && process.platform === "linux" ? await runCauseEffect(readInstallationMode()) : null;
+  const updateConfig = join(process.resourcesPath, "app-update.yml");
   const hostRelease = new HostReleaseService({
     currentVersion: app.getVersion(),
     packaged: app.isPackaged,
@@ -3252,6 +3253,9 @@ export async function createApplicationServices({
     arch: process.arch,
     environment: process.env,
     installationMode,
+    ...(app.isPackaged && process.platform === "win32" && existsSync(updateConfig)
+      ? { windowsUpdateConfig: updateConfig }
+      : {}),
     updateStatus: () => ({
       phase: requestedUpdate?.snapshot().phase ?? "unsupported",
       managedByHost: requestedUpdate?.snapshot().remoteUpdates === "managed",

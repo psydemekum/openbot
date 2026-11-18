@@ -12,6 +12,12 @@ const ReleaseManifest = Schema.Struct({
 });
 
 type ReleaseTarget = { feed: string; asset: (version: string) => string };
+const officialReleaseFeed = "https://github.com/nightly-labs/openbot/releases/latest/download";
+const GitHubUpdateConfig = Schema.Struct({
+  provider: Schema.Literal("github"),
+  owner: Schema.String.check(Schema.isPattern(/^[\w-]+$/u)),
+  repo: Schema.String.check(Schema.isPattern(/^[\w-][\w.-]*$/u)),
+});
 
 /** Only published desktop targets have a compatible release feed. */
 function releaseTarget(platform: NodeJS.Platform, arch: string): ReleaseTarget | null {
@@ -42,6 +48,7 @@ interface HostReleaseOptions {
   environment: NodeJS.ProcessEnv;
   updateStatus: () => Pick<UpdateStatus, "phase" | "managedByHost">;
   installationMode: string | null;
+  windowsUpdateConfig?: string;
   fetch?: typeof fetch;
 }
 
@@ -103,7 +110,11 @@ export class HostReleaseService {
     const target = this.#target;
     return yield* Effect.gen({ self: this }, function* () {
       const version = yield* Effect.tryPromise({
-        try: (signal) => fetchLatestRelease(target, this.#options.fetch ?? fetch, signal),
+        try: async (signal) => {
+          const path = this.#options.windowsUpdateConfig;
+          const base = path ? await readGitHubReleaseFeed(path, signal) : officialReleaseFeed;
+          return fetchLatestRelease(target, this.#options.fetch ?? fetch, signal, base);
+        },
         catch: () => new ReleaseCheckFailed(),
       });
       this.#latestVersion = version;
@@ -126,9 +137,21 @@ export class HostReleaseService {
   }).bind(this);
 }
 
+/** Windows reads the same packaged repository as electron-updater. */
+async function readGitHubReleaseFeed(path: string, signal: AbortSignal): Promise<string> {
+  const yaml = await readFile(path, { encoding: "utf8", signal });
+  const config = Schema.decodeUnknownSync(GitHubUpdateConfig)(parse(yaml));
+  return `https://github.com/${config.owner}/${config.repo}/releases/latest/download`;
+}
+
 /** The version of the latest published release for `target`. Rejects on any fault of the feed. */
-async function fetchLatestRelease(target: ReleaseTarget, request: typeof fetch, signal: AbortSignal): Promise<string> {
-  const response = await request(`https://github.com/nightly-labs/openbot/releases/latest/download/${target.feed}`, {
+async function fetchLatestRelease(
+  target: ReleaseTarget,
+  request: typeof fetch,
+  signal: AbortSignal,
+  base = officialReleaseFeed,
+): Promise<string> {
+  const response = await request(`${base}/${target.feed}`, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
   });
   if (!response.ok || !response.body) {
