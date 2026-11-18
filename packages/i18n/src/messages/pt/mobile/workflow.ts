@@ -2,6 +2,8 @@ import type { PartialTranslation } from "../../../message";
 import type { messages as source } from "../../en/mobile/workflow";
 
 export const messages = {
+  "mobile.workflow.inbox.title": "Notificações de fluxos de trabalho",
+  "mobile.workflow.inbox.empty": "Ainda não há notificações de fluxos de trabalho.",
   "mobile.workflow.unsupported": "Atualize o OpenBot neste servidor para usar fluxos de trabalho no celular.",
   "mobile.workflow.offline": "O servidor está offline. Os fluxos de trabalho aparecem quando ele se conectar.",
   "mobile.workflow.list.loading": "Carregando…",

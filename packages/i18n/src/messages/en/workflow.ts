@@ -1,6 +1,8 @@
 import { defineMessages } from "../../message";
 
 export const messages = defineMessages("workflow", {
+  "workflow.inbox.title": "Workflow notifications",
+  "workflow.inbox.empty": "No workflow notifications yet.",
   "workflow.output.formatTxt": "Text (.txt)",
   "workflow.output.formatMd": "Markdown (.md)",
   "workflow.output.formatHtml": "HTML (.html)",

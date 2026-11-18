@@ -81,6 +81,7 @@ import { VAULT_V4_ROUTES } from "@openbot/contracts/team-protocol/vault-v4";
 import { WHATSAPP_CONNECTOR_ROUTES } from "@openbot/contracts/team-protocol/whatsapp-connector-v1";
 import { WHATSAPP_STATUS_REACTIONS_ROUTES } from "@openbot/contracts/team-protocol/whatsapp-status-reactions-v1";
 import { WHATSAPP_WORKING_MESSAGE_ROUTES } from "@openbot/contracts/team-protocol/whatsapp-working-message-v1";
+import { WORKFLOW_NOTIFICATIONS_ROUTE } from "@openbot/contracts/team-protocol/workflow-notifications-v1";
 import { WORKFLOWS_HIGGSFIELD_ROUTES } from "@openbot/contracts/team-protocol/workflows-higgsfield-v1";
 import { WORKFLOWS_MEDIA_CATALOG_ROUTES } from "@openbot/contracts/team-protocol/workflows-media-catalog-v1";
 import { WORKFLOWS_SUNRA_ROUTES } from "@openbot/contracts/team-protocol/workflows-sunra-v1";
@@ -169,6 +170,7 @@ const PASSIVE_ROUTES: ReadonlySet<string> = new Set([
   WORKFLOWS_HIGGSFIELD_ROUTES.providers,
   WORKFLOWS_HIGGSFIELD_ROUTES.credits,
   WORKFLOWS_MEDIA_CATALOG_ROUTES.catalog,
+  WORKFLOW_NOTIFICATIONS_ROUTE,
   WORKFLOWS_MEDIA_CATALOG_ROUTES.price,
   AGENT_FOLDERS_ROUTES.read,
   AGENT_FOLDERS_ROUTES.browse,

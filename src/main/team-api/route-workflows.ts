@@ -9,6 +9,10 @@ import {
   type WorkflowStep,
 } from "@openbot/contracts/ipc";
 import {
+  WORKFLOW_NOTIFICATIONS_CAPABILITY,
+  WORKFLOW_NOTIFICATIONS_ROUTE,
+} from "@openbot/contracts/team-protocol/workflow-notifications-v1";
+import {
   WORKFLOWS_GITHUB_CAPABILITY,
   WORKFLOWS_GITHUB_ROUTES,
 } from "@openbot/contracts/team-protocol/workflows-github-v1";
@@ -61,7 +65,7 @@ import type { RouteOutcome, TeamApiRequestContext } from "./request-context";
 import { readJson, requireAdmin, requireAgentLevel, stringField, WEBRTC_FRAME_BODY_BUDGET } from "./request-helpers";
 import { runEventsEffect } from "./route-events";
 
-const WORKFLOW_PATHS = new Set<string>(Object.values(WORKFLOWS_ROUTES));
+const WORKFLOW_PATHS = new Set<string>([...Object.values(WORKFLOWS_ROUTES), WORKFLOW_NOTIFICATIONS_ROUTE]);
 const WORKFLOW_GITHUB_PATHS = new Set<string>(Object.values(WORKFLOWS_GITHUB_ROUTES));
 const WORKFLOW_MEDIA_PATHS = new Set<string>(Object.values(WORKFLOWS_MEDIA_ROUTES));
 const WORKFLOW_SUNRA_PATHS = new Set<string>(Object.values(WORKFLOWS_SUNRA_ROUTES));
@@ -289,6 +293,26 @@ export async function routeWorkflows(
   };
 
   switch (path) {
+    case WORKFLOW_NOTIFICATIONS_ROUTE: {
+      if (!capabilities.has(WORKFLOW_NOTIFICATIONS_CAPABILITY))
+        throw new HttpError(400, sourceText("error.workflow.serverTooOld"));
+      const known = listed();
+      const visible = new Set(
+        (await run(workflows.listWithGraphs()))
+          .filter(({ graph }) => visibleGraph(graph, known))
+          .map(({ summary }) => summary.id),
+      );
+      const notices = workflows
+        .notifications()
+        .filter(
+          ({ notice, agentIds }) =>
+            visible.has(notice.workflowId) &&
+            visibleAgents(agentIds, known) &&
+            (!notice.chat || visibleAgents([notice.chat.agentId], known)),
+        )
+        .map(({ notice }) => notice);
+      return json(200, { notices });
+    }
     case WORKFLOWS_ROUTES.list: {
       const known = listed();
       const all = await run(workflows.listWithGraphs());

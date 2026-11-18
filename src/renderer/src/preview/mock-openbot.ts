@@ -302,6 +302,7 @@ export interface MockOpenBotOptions
   routineFlowLinks?: RoutineFlowLink[];
   routineFlowSteps?: RoutineFlowStep[];
   workflows?: MockWorkflowSeed[];
+  workflowNotifications?: import("@openbot/contracts/ipc").WorkflowNotification[];
   /** The CRM when the preview starts. Without it, the CRM is empty. */
   crm?: MockCrmSeed;
   customProviders?: CustomProviderSummary[];
@@ -1725,9 +1726,12 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       { routines, routineRuns, links: options.routineFlowLinks, steps: options.routineFlowSteps },
       (agentId) => emitAgentEvent({ type: "routine-flows-changed", agentId }),
     ),
-    workflows: mockWorkflows(options.workflows ?? [], (workflowId) =>
-      emitAgentEvent({ type: "workflows-changed", workflowId }),
-    ),
+    workflows: {
+      ...mockWorkflows(options.workflows ?? [], (workflowId) =>
+        emitAgentEvent({ type: "workflows-changed", workflowId }),
+      ),
+      notifications: async () => options.workflowNotifications ?? [],
+    },
     crm: mockCrm(options.crm ?? {}, () => emitAgentEvent({ type: "crm-changed" })),
     routineResults: mockRoutineResults(routines, options, (agentId) =>
       emitAgentEvent({ type: "routines-changed", agentId }),

@@ -29,7 +29,6 @@
 
 import { isAgentProvider } from "@openbot/contracts/agent-providers";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { WorkflowFileResult } from "@openbot/contracts/ipc";
 import {
   type AgentEvent,
   type AgentReasoningEffort,
@@ -45,9 +44,11 @@ import {
   type SaveWorkflowGraphInput,
   type StartWorkflowRunInput,
   WORKFLOW_GITHUB_EVENTS,
+  WORKFLOW_NOTICE_TEXT_LIMIT,
   WORKFLOW_PICTURE_TYPES,
   type WorkflowCatalogProvider,
   type WorkflowDetail,
+  type WorkflowFileResult,
   type WorkflowGitHubHistory,
   type WorkflowGitHubLastEventInput,
   type WorkflowGraph,
@@ -62,6 +63,7 @@ import {
   type WorkflowMediaSpecs,
   type WorkflowNode,
   type WorkflowNodeKind,
+  type WorkflowNotification,
   type WorkflowRun,
   type WorkflowRunDetail,
   type WorkflowRunPage,
@@ -80,7 +82,7 @@ import {
 } from "@openbot/contracts/ipc";
 import { isOneOf } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
-import { createOpenBotLogger } from "@openbot/logging";
+import { createOpenBotLogger, redactText } from "@openbot/logging";
 import { Cause, Context, Effect, Exit, Fiber, Layer, ManagedRuntime, Result, Schema, Scope, Semaphore } from "effect";
 import { isNoUpdateAnswer } from "../agent/routine-quiet-runs";
 import type { AgentProvider } from "../agent-client";
@@ -169,6 +171,7 @@ import {
   mediaVoice,
   modelStepPrompt,
   nextActions,
+  notificationSource,
   runScope,
   soloInputs,
   unsupportedNode,
@@ -249,7 +252,17 @@ export interface WorkflowRunEnd {
   stepKinds: WorkflowNodeKind[];
 }
 
+export interface StoredWorkflowNotification {
+  notice: WorkflowNotification;
+  agentIds: string[];
+}
+
 export interface WorkflowsDependencies {
+  inbox?: {
+    list(): readonly StoredWorkflowNotification[];
+    add(entry: StoredWorkflowNotification): Effect.Effect<void, { readonly cause: unknown }>;
+    chat(deliveryId: string, agentId: string): WorkflowNotification["chat"];
+  };
   store: WorkflowStore;
   runs: WorkflowRunStore;
   delivery(deliveryId: string): WorkflowDelivery | null;
@@ -402,6 +415,7 @@ interface WorkflowRunScope {
 }
 
 interface WorkflowsShape {
+  notifications(): readonly StoredWorkflowNotification[];
   list(): Effect.Effect<WorkflowSummary[], WorkflowFailed>;
   /** Every workflow with its graph, in one read. */
   listWithGraphs(): Effect.Effect<{ summary: WorkflowSummary; graph: WorkflowGraph }[], WorkflowFailed>;
@@ -1140,6 +1154,47 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
           return runs.step(step.id)?.status !== "running";
         });
 
+        const publishNotice = Effect.fn("Workflows.publishNotice")(function* (
+          step: StoredWorkflowStep,
+          kind: WorkflowNotice["kind"],
+          text: string,
+        ) {
+          const workflowTitle = titleOf(step.workflowId);
+          const inbox = dependencies.inbox;
+          if (inbox) {
+            const run = step.runId ? runs.run(step.runId) : null;
+            const graph = run?.graph ?? store.detail(step.workflowId)?.graph;
+            if (graph) {
+              const source = notificationSource(
+                graph,
+                step.nodeId,
+                run ? latestSteps(run.id) : runs.latestDone(step.workflowId),
+              );
+              const chat = source?.deliveryId && source.agentId ? inbox.chat(source.deliveryId, source.agentId) : null;
+              yield* inbox
+                .add({
+                  notice: {
+                    id: step.id,
+                    workflowId: step.workflowId,
+                    kind,
+                    at: now().toISOString(),
+                    title: redactText(workflowTitle).slice(0, 240),
+                    text: redactText(text).trim().slice(0, WORKFLOW_NOTICE_TEXT_LIMIT),
+                    chat,
+                  },
+                  agentIds: graphAgentIds(graph),
+                })
+                .pipe(
+                  Effect.catch(() =>
+                    Effect.sync(() => logger.warn("Could not save a workflow notification.", { stepId: step.id })),
+                  ),
+                );
+              changed(step.workflowId);
+            }
+          }
+          dependencies.notify({ kind, workflowId: step.workflowId, workflowTitle, text });
+        });
+
         const saveFile = Effect.fn("Workflows.saveFile")(function* (step: StoredWorkflowStep, node: WorkflowNode) {
           const prepared = workflowFileOutput(
             node.fields,
@@ -1164,13 +1219,7 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
           const { id, name, mimeType, size } = stored.success;
           const file: WorkflowFileResult = { type: "workflow-file", id, name, mimeType, size };
           settle(step, { status: "done", output: JSON.stringify(file) });
-          if (node.fields.notify === true)
-            dependencies.notify({
-              kind: "output",
-              workflowId: step.workflowId,
-              workflowTitle: titleOf(step.workflowId),
-              text: file.name,
-            });
+          if (node.fields.notify === true) yield* publishNotice(step, "output", file.name);
         }, Effect.uninterruptible);
 
         /** Does what a new running step of `node` does. */
@@ -1206,12 +1255,7 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
             case "approval":
               if (runs.awaitApproval(step.id, now())) {
                 changed(step.workflowId);
-                dependencies.notify({
-                  kind: "approval",
-                  workflowId: step.workflowId,
-                  workflowTitle: titleOf(step.workflowId),
-                  text: fieldText(node, "question"),
-                });
+                yield* publishNotice(step, "approval", fieldText(node, "question"));
               }
               return;
             case "output":
@@ -1243,12 +1287,7 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
                 yield* sendSlack(step, node, run);
                 return;
               }
-              dependencies.notify({
-                kind: "output",
-                workflowId: step.workflowId,
-                workflowTitle: titleOf(step.workflowId),
-                text: step.input,
-              });
+              yield* publishNotice(step, "output", step.input);
               settle(step, { status: "done", output: step.input });
               return;
             default:
@@ -2223,6 +2262,7 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
         return Workflows.of({
           list,
           listWithGraphs,
+          notifications: () => dependencies.inbox?.list() ?? [],
           get,
           create,
           rename,

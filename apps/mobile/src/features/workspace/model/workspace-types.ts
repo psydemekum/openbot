@@ -175,6 +175,7 @@ import type {
   WorkflowGitHubHistory,
   WorkflowGitHubRepositoryOptions,
   WorkflowGraph,
+  WorkflowNotification,
   WorkflowRunDetail,
   WorkflowRunPage,
   WorkflowSaveResult,
@@ -1126,6 +1127,8 @@ export interface MobileWorkspaceContextValue {
   /** True when the host advertises `workflows-v1`. The host shows each member the workflows of their agents. */
   canUseWorkflows: (serverId: string) => boolean;
   listWorkflows: (serverId: string) => Promise<WorkflowSummary[]>;
+  canReadWorkflowNotifications: (serverId: string) => boolean;
+  workflowNotifications: (serverId: string) => Promise<WorkflowNotification[]>;
   loadWorkflow: (workflowId: string, serverId: string) => Promise<WorkflowDetail>;
   createWorkflow: (input: CreateWorkflowInput, serverId: string) => Promise<WorkflowDetail>;
   renameWorkflow: (input: RenameWorkflowInput, serverId: string) => Promise<WorkflowSummary>;
@@ -1312,6 +1315,7 @@ export type MobileWorkspaceCapabilityCheck =
   | "canUseWorkflows"
   | "canUseWorkflowGitHub"
   | "canUseWorkflowFiles"
+  | "canReadWorkflowNotifications"
   | "canUseWorkflowChats"
   | "canReadServerStorage"
   | "canOrganizeLibrary"

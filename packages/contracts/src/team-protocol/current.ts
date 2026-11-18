@@ -205,6 +205,7 @@ import { WEBHOOK_TESTS_CAPABILITY } from "./webhook-tests-v1";
 import { WHATSAPP_CONNECTOR_CAPABILITY } from "./whatsapp-connector-v1";
 import { WHATSAPP_STATUS_REACTIONS_CAPABILITY } from "./whatsapp-status-reactions-v1";
 import { WHATSAPP_WORKING_MESSAGE_CAPABILITY } from "./whatsapp-working-message-v1";
+import { WORKFLOW_NOTIFICATIONS_CAPABILITY } from "./workflow-notifications-v1";
 import { WORKFLOWS_CHANNELS_CAPABILITY } from "./workflows-channels-v1";
 import { WORKFLOWS_CHATS_CAPABILITY } from "./workflows-chats-v1";
 import { WORKFLOWS_FILES_CAPABILITY } from "./workflows-files-v1";
@@ -465,6 +466,7 @@ export {
   WHATSAPP_CONNECTOR_CAPABILITY,
   WHATSAPP_STATUS_REACTIONS_CAPABILITY,
   WHATSAPP_WORKING_MESSAGE_CAPABILITY,
+  WORKFLOW_NOTIFICATIONS_CAPABILITY,
   WORKFLOWS_CAPABILITY,
   WORKFLOWS_CHANNELS_CAPABILITY,
   WORKFLOWS_CHATS_CAPABILITY,
@@ -722,6 +724,7 @@ export const TEAM_CURRENT_CAPABILITIES = [
   UI_BLOCK_PREVIEW_EDIT_CAPABILITY,
   WORKFLOWS_MEDIA_CATALOG_CAPABILITY,
   WORKFLOWS_FILES_CAPABILITY,
+  WORKFLOW_NOTIFICATIONS_CAPABILITY,
 ] as const;
 
 export type TeamCurrentCapability = (typeof TEAM_CURRENT_CAPABILITIES)[number];
@@ -979,6 +982,7 @@ export const TEAM_BOOTSTRAP_CAPABILITIES = TEAM_CURRENT_CAPABILITIES.filter(
     capability !== AGENT_THREAD_REQUESTS_CAPABILITY &&
     capability !== TEAM_BROWSER_VIEW_PAGE_COPY_CAPABILITY &&
     capability !== UI_BLOCK_PREVIEW_EDIT_CAPABILITY &&
+    capability !== WORKFLOW_NOTIFICATIONS_CAPABILITY &&
     capability !== WORKFLOWS_MEDIA_CATALOG_CAPABILITY,
 );
 /**
@@ -1114,6 +1118,7 @@ export const TEAM_PROTOCOL_V9_ONLY_CAPABILITIES: ReadonlySet<string> = new Set<T
   UI_BLOCK_PREVIEW_EDIT_CAPABILITY,
   WORKFLOWS_MEDIA_CATALOG_CAPABILITY,
   WORKFLOWS_FILES_CAPABILITY,
+  WORKFLOW_NOTIFICATIONS_CAPABILITY,
 ]);
 // A v8 host reads at most 128 capabilities, so a client sends the protocol 9 ones only after it
 // negotiates protocol 9.
@@ -1330,6 +1335,7 @@ export function legacyTeamCapabilities(capabilities: readonly string[]): string[
       capability !== AGENT_THREAD_REQUESTS_CAPABILITY &&
       capability !== TEAM_BROWSER_VIEW_PAGE_COPY_CAPABILITY &&
       capability !== UI_BLOCK_PREVIEW_EDIT_CAPABILITY &&
+      capability !== WORKFLOW_NOTIFICATIONS_CAPABILITY &&
       capability !== WORKFLOWS_MEDIA_CATALOG_CAPABILITY,
   );
 }

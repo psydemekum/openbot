@@ -2,6 +2,8 @@ import type { PartialTranslation } from "../../message";
 import type { messages as source } from "../en/workflow";
 
 export const messages = {
+  "workflow.inbox.title": "Notificações de fluxos de trabalho",
+  "workflow.inbox.empty": "Ainda não há notificações de fluxos de trabalho.",
   "workflow.board.port.text": "Texto",
   "workflow.board.port.image": "Imagem",
   "workflow.board.port.file": "Arquivo",

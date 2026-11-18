@@ -220,6 +220,13 @@ export function decodeRemoteWorkflowMediaPrice(value: unknown): WorkflowMediaPri
   return { credits: value.credits };
 }
 
+import { isWorkflowNotificationList } from "@openbot/contracts/ipc";
+export function decodeRemoteWorkflowNotifications(value: unknown) {
+  if (!isDynamicRecord(value) || !isWorkflowNotificationList(value.notices))
+    throw new Error("Invalid workflow notifications.");
+  return value.notices;
+}
+
 /** The `workflows-v1` list route wraps its list as `{ workflows }`. */
 export function decodeRemoteWorkflowList(value: unknown) {
   if (!isDynamicRecord(value) || !Array.isArray(value.workflows)) throw new Error("Invalid remote workflow list.");

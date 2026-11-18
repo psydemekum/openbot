@@ -2044,6 +2044,7 @@ export const IPC_ENDPOINTS = {
      * through `workflows-media-catalog-v1`; an older one answers no models, and the client shows the
      * fixed models of `WORKFLOW_MEDIA_MODELS`.
      */
+    notifications: scopedQuery<import("./workflow-notifications").WorkflowNotification[]>()("workflows:notifications"),
     mediaCatalog: scopedQuery<WorkflowMediaCatalog>()("workflows:media-catalog"),
     /**
      * What one file of a catalog model costs with the choices of a step, as the service quotes it.

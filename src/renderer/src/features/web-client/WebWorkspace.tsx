@@ -206,6 +206,7 @@ import { queuedDeliveriesInOrder } from "../../queue-reconciliation";
 import "katex/contrib/copy-tex";
 // Copying a selection gives clean HTML, as on desktop.
 import "../../selection-copy";
+import { WORKFLOW_NOTIFICATIONS_CAPABILITY } from "@openbot/contracts/team-protocol/workflow-notifications-v1";
 import { actionToast } from "../../action-toast";
 import { desktopAnalytics } from "../../analytics";
 import { collectThreadMessageMatches, formatMessageTime, toAgentMessage } from "../../app-message-projection";
@@ -328,6 +329,7 @@ import {
 } from "../window/SettingsPageFrame";
 import { WindowBackdrop } from "../window/WindowBackdrop";
 import type { SettingsKind, WindowPage } from "../window/window-page-context";
+import { WorkflowNotificationBell } from "../workflows/WorkflowNotificationBell";
 import { createWorkflowMediaCredits } from "../workflows/workflow-media-credits";
 import { WebAgentSettings } from "./WebAgentSettings";
 import { WebConnectComputer } from "./WebConnectComputer";
@@ -1335,6 +1337,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
       if (online && wasOnline === false) for (const listener of hostOnlineListeners) listener();
     },
   );
+  const [inboxWorkflow, setInboxWorkflow] = createSignal<{ serverId: string; workflowId: string }>();
   const workflowHost = webWorkflowHost({
     request: () => hostRequest(),
     capabilities: () => workspace.state.capabilities,
@@ -3237,6 +3240,11 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                             <Loading>
                               <WorkflowsCanvas
                                 host={workflowHost}
+                                request={{
+                                  workflowId: () =>
+                                    inboxWorkflow()?.serverId === serverId ? inboxWorkflow()?.workflowId : undefined,
+                                  taken: () => setInboxWorkflow(undefined),
+                                }}
                                 serverId={serverId}
                                 admin={canAdministerServer(workspace.state.host?.role)}
                                 agents={workspace.profiles()}
@@ -3353,6 +3361,35 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                         (agent) =>
                           !pausedAgentIds().has(agent.id) && (workspace.state.reads[agent.id]?.unreadCount ?? 0) > 0,
                       ) || channels.hasUnread()
+                    }
+                    workflowBell={
+                      <Show
+                        when={
+                          workspace.state.status === "online" &&
+                          workspace.state.capabilities.includes(WORKFLOW_NOTIFICATIONS_CAPABILITY) &&
+                          workspace.state.host?.hostId
+                        }
+                        keyed
+                      >
+                        {(id) => (
+                          <WorkflowNotificationBell
+                            host={workflowHost}
+                            onOpen={(notice) => {
+                              setMobilePane("conversation");
+                              if (
+                                notice.chat &&
+                                workspace.profiles().some((agent) => agent.id === notice.chat?.agentId)
+                              ) {
+                                agentThreads()?.tabs.open(notice.chat.agentId, notice.chat.taskId ?? "main");
+                                void select(notice.chat.agentId);
+                              } else {
+                                setInboxWorkflow({ serverId: id, workflowId: notice.workflowId });
+                                void openHostPage(id, "workflows", null);
+                              }
+                            }}
+                          />
+                        )}
+                      </Show>
                     }
                     view={layout.sidebarView()}
                     serverName={workspace.state.host?.name ?? "OpenBot"}

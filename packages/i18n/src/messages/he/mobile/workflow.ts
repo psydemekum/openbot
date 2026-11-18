@@ -2,6 +2,8 @@ import type { PartialTranslation } from "../../../message";
 import type { messages as source } from "../../en/mobile/workflow";
 
 export const messages = {
+  "mobile.workflow.inbox.title": "התראות מתהליכי עבודה",
+  "mobile.workflow.inbox.empty": "עדיין אין התראות מתהליכי עבודה.",
   "mobile.workflow.unsupported": "יש לעדכן את OpenBot בשרת הזה כדי להשתמש בתהליכי עבודה בטלפון.",
   "mobile.workflow.offline": "השרת לא מקוון. תהליכי העבודה יוצגו כשהוא יתחבר.",
   "mobile.workflow.list.loading": "טוען…",

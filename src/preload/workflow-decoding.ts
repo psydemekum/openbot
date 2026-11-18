@@ -38,6 +38,9 @@ export const decodeWorkflowGitHubOptions = guardedDecoder(
 );
 export const decodeWorkflowGitHubHistory = guardedDecoder(isWorkflowGitHubHistory, "workflow GitHub history response");
 export const decodeWorkflowMediaCredits = guardedDecoder(isWorkflowMediaCredits, "workflow media credits response");
+
+import { isWorkflowNotificationList } from "@openbot/contracts/ipc";
+export const decodeWorkflowNotifications = guardedDecoder(isWorkflowNotificationList, "workflow notifications");
 export const decodeWorkflowMediaCatalog = guardedDecoder(isWorkflowMediaCatalog, "workflow media catalog response");
 export const decodeWorkflowMediaPrice = guardedDecoder(isWorkflowMediaPrice, "workflow media price response");
 export const decodeWorkflowMediaProviders = guardedDecoder(

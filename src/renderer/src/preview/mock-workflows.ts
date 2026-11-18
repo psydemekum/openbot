@@ -504,6 +504,7 @@ export function mockWorkflows(
       higgsfield: { available: 860, quota: null },
     }),
     mediaCatalog: async () => ({ models: PREVIEW_MEDIA_CATALOG }),
+    notifications: async () => [],
     // A fixed quote: a video costs per second, and a larger resolution costs more.
     mediaPrice: async (input) => {
       const scale = input.resolution?.startsWith("4") || input.resolution === "1080p" ? 2 : 1;

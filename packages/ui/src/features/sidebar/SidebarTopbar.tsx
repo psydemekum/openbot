@@ -43,6 +43,7 @@ export function SidebarTopbar() {
         {(serverMenu) => <ServerMenu {...serverMenu()} serverName={props.serverName} compact={props.compact} />}
       </Show>
       <div class="sidebar-topbar-actions">
+        {props.workflowBell}
         <Show when={props.chatHistory}>
           {(history) => {
             const backLabel = () => {

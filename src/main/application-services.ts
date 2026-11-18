@@ -60,6 +60,7 @@ import { MAC_PERMISSION_URLS } from "./mac-permission-urls";
 import { PushNotificationStore } from "./push-notification-store";
 import { DESKTOP_USE_MS } from "./push-notifications";
 import { RemoteWorkflowError, toRemoteWorkflowError } from "./remote-service-effects";
+import { workflowNotificationStore } from "./workflow-notification-store";
 import { sizeWorkflowPicture } from "./workflow-picture-size";
 /**
  * The composition root. Every long-lived service the desktop app owns is built here, in one
@@ -2628,9 +2629,16 @@ export async function createApplicationServices({
     download: (url, maxBytes) => downloadDiscordAttachment(url, maxBytes),
   });
   const workflowGitHub = workflowGitHubDirectory(() => githubConnector.workflowCatalog(), githubRest);
+  const workflowInbox = workflowNotificationStore(join(app.getPath("userData"), "workflow-notifications.json"));
+  await runCauseEffect(workflowInbox.load());
   const workflowRuntime = await Effect.runPromise(
     createWorkflows({
       store: workflowStore,
+      inbox: {
+        ...workflowInbox,
+        chat: (deliveryId, agentId) =>
+          mailbox.getDelivery(deliveryId) ? { agentId, taskId: mailbox.taskIdForDelivery(deliveryId) } : null,
+      },
       runs: new WorkflowRunStore({ database: store.database }),
       github: new WorkflowGitHubStore({ database: store.database }),
       githubApp: () => githubAppConfig()?.slug ?? null,

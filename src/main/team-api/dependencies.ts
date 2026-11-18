@@ -455,6 +455,7 @@ export type TeamApiWorkflows = Pick<
   WorkflowsHandle,
   | "list"
   | "listWithGraphs"
+  | "notifications"
   | "get"
   | "create"
   | "rename"

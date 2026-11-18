@@ -32,7 +32,7 @@ import { serverCanAdminister, serverRoleCanAdminister, serverSupportsCapability 
 
 type WorkflowsApi = OpenBotDesktopApi["workflows"];
 /** The methods that take only the server. */
-type NoInputMethod = "list" | "githubCatalog" | "mediaProviders" | "mediaCredits" | "mediaCatalog";
+type NoInputMethod = "list" | "notifications" | "githubCatalog" | "mediaProviders" | "mediaCredits" | "mediaCatalog";
 /** Each method with its input only; the methods of `NoInputMethod` take none. */
 type BoundWorkflowsApi = {
   [Name in Exclude<keyof WorkflowsApi, NoInputMethod>]: (
@@ -214,6 +214,7 @@ export function desktopWorkflowHost(serverId: string, server: () => ServerSummar
   return {
     workflows: {
       list: () => api().list(serverId),
+      notifications: () => api().notifications(serverId),
       get: (workflowId) => api().get(workflowId, serverId),
       create: (input) => api().create(input, serverId),
       rename: (input) => api().rename(input, serverId),

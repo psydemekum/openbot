@@ -91,6 +91,7 @@ export interface SidebarProps {
   /** Brings a deleted channel back to the list. Without it, a row in Deleted channels has no menu. */
   onRestoreChannel?: ((channelId: string) => void) | undefined;
   serverName: string;
+  workflowBell?: JSX.Element;
   onOpenServerSettings?: ((trigger: HTMLElement) => void) | undefined;
   /** The desktop server menu. Without it, the server name opens the server settings. */
   serverMenu?: Omit<ServerMenuProps, "serverName" | "compact"> | undefined;

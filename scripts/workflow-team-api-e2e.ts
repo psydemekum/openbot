@@ -60,6 +60,10 @@ import { AGENT_ACCESS_CODECS, AGENT_ACCESS_ROUTES } from "@openbot/contracts/tea
 import { teamCapabilitiesForProtocol } from "@openbot/contracts/team-protocol/current";
 import { TEAM_PROTOCOL_V7 } from "@openbot/contracts/team-protocol/v7";
 import { TEAM_PROTOCOL_V9 } from "@openbot/contracts/team-protocol/v9";
+import {
+  WORKFLOW_NOTIFICATIONS_CAPABILITY,
+  WORKFLOW_NOTIFICATIONS_ROUTE,
+} from "@openbot/contracts/team-protocol/workflow-notifications-v1";
 import { WORKFLOWS_CHANNELS_CAPABILITY } from "@openbot/contracts/team-protocol/workflows-channels-v1";
 import { WORKFLOWS_CHATS_CAPABILITY } from "@openbot/contracts/team-protocol/workflows-chats-v1";
 import {
@@ -95,6 +99,7 @@ import {
 import { sourceText } from "@openbot/i18n/source";
 import {
   decodeRemoteWorkflowDetail,
+  decodeRemoteWorkflowNotifications,
   decodeRemoteWorkflowRunDetail,
   decodeRemoteWorkflowVersions,
 } from "@openbot/team-client/workflow-decoding";
@@ -114,6 +119,7 @@ import { WorkflowStore } from "../src/backend/workflows/workflow-store";
 import { workflowScheduleDueAt } from "../src/backend/workflows/workflow-triggers";
 import { createWorkflows, type WorkflowsHandle } from "../src/backend/workflows/workflows";
 import type { TeamApiBrowser } from "../src/main/team-api/dependencies";
+import { workflowNotificationStore } from "../src/main/workflow-notification-store";
 
 const OUT = resolve(import.meta.dirname, "../.openbot-build/workflow-team-api-e2e");
 /** As the app answers: true while an enabled Sunra row of the host is signed in. */
@@ -317,6 +323,8 @@ let failingAgent = "";
 
 /** Starts the host on the profile, as the app does at each launch, with stand-ins for agent turns. */
 async function startHost(): Promise<Host> {
+  const inbox = workflowNotificationStore(join(userData, "workflow-notifications.json"));
+  await runCauseEffect(inbox.load());
   const database = new OpenBotDatabase(userData);
   const agentStore = new AgentStore(userData, home, database);
   const mailbox = new MailboxStore(userData, agentStore.sharedRoot, agentStore.database);
@@ -334,6 +342,7 @@ async function startHost(): Promise<Host> {
   const deliveries = new Map<string, string>();
   const workflows = await Effect.runPromise(
     createWorkflows({
+      inbox: { ...inbox, chat: (deliveryId, agentId) => ({ agentId, taskId: deliveryId }) },
       store: new WorkflowStore({ database, nextDueAt: workflowScheduleDueAt(() => "UTC") }),
       runs: new WorkflowRunStore({ database }),
       github: new WorkflowGitHubStore({ database }),
@@ -1533,6 +1542,54 @@ async function runChecks() {
     const unauthenticated = await call("GET", TEAM_API_ROUTES.attachment(result.id), { protocol: TEAM_PROTOCOL_V9 });
     assert.equal(unauthenticated.status, 401);
     return { run: done.status, download: file.status, unauthenticated: unauthenticated.status, name: result.name };
+  });
+
+  await step("notification history keeps the chat, order and access of each notice", async () => {
+    assert.ok(!teamCapabilitiesForProtocol(8).includes(WORKFLOW_NOTIFICATIONS_CAPABILITY));
+    const read = async (token: string) => {
+      const response = await call("POST", WORKFLOW_NOTIFICATIONS_ROUTE, {
+        token,
+        body: {},
+        protocol: TEAM_PROTOCOL_V9,
+      });
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      return decodeRemoteWorkflowNotifications(response.body);
+    };
+    const postNotice = async (agentId: string) => {
+      const graph = withOutput(agentGraph(agentId), { id: "notice", kind: "output", at: at(600), fields: {} });
+      const workflow = await hostWorkflow("Notification", graph);
+      const { run } = await runCauseEffect(
+        current().workflows.startRun({ workflowId: workflow.id, requestId: requestId() }),
+      );
+      await settled(run.id, "notice");
+      return workflow;
+    };
+    const visible = await postNotice(open);
+    const hidden = await postNotice(closed);
+    const owner = await read(ownerToken);
+    assert.equal(owner[0]?.workflowId, hidden.id);
+    assert.equal(owner[1]?.workflowId, visible.id);
+    assert.equal(owner[1]?.chat?.agentId, open);
+    assert.ok(owner[1]?.chat?.taskId?.startsWith("delivery-workflow-step:"));
+    assert.equal(owner[1]?.text.length, 240);
+    const saved = await runCauseEffect(
+      current().workflows.saveGraph({
+        workflowId: hidden.id,
+        baseRevision: hidden.revision,
+        graph: { nodes: [promptNode], edges: [], strokes: [] },
+      }),
+    );
+    assert.ok(saved.ok);
+    const allowed = await read(member);
+    assert.ok(allowed.some((item) => item.workflowId === visible.id));
+    assert.ok(!allowed.some((item) => item.workflowId === hidden.id));
+    const reloaded = workflowNotificationStore(join(userData, "workflow-notifications.json"));
+    await runCauseEffect(reloaded.load());
+    assert.deepEqual(
+      reloaded.list().map((entry) => entry.notice.id),
+      owner.map((entry) => entry.id),
+    );
+    return { authorized: true, newestFirst: true, restart: true };
   });
 
   // The file suite includes the access checks above, but needs no installed model CLI.

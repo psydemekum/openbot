@@ -1,6 +1,10 @@
 import type { WorkflowGraph, WorkflowNodeSize } from "@openbot/contracts/ipc";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import {
+  WORKFLOW_NOTIFICATIONS_CAPABILITY,
+  WORKFLOW_NOTIFICATIONS_ROUTE,
+} from "@openbot/contracts/team-protocol/workflow-notifications-v1";
+import {
   WORKFLOWS_GITHUB_CAPABILITY,
   WORKFLOWS_GITHUB_ROUTES,
 } from "@openbot/contracts/team-protocol/workflows-github-v1";
@@ -11,6 +15,7 @@ import {
   decodeRemoteWorkflowGitHubHistory,
   decodeRemoteWorkflowGitHubOptions,
   decodeRemoteWorkflowList,
+  decodeRemoteWorkflowNotifications,
   decodeRemoteWorkflowRunDetail,
   decodeRemoteWorkflowRunPage,
   decodeRemoteWorkflowSaveResult,
@@ -32,6 +37,7 @@ const RUN_PAGE_SIZE = 20;
 type WorkflowActions = Pick<
   MobileWorkspaceContextValue,
   | "listWorkflows"
+  | "workflowNotifications"
   | "loadWorkflow"
   | "createWorkflow"
   | "renameWorkflow"
@@ -76,6 +82,10 @@ export function createWorkflowActions({
     return send(serverId, path, decode, body);
   };
   return {
+    workflowNotifications: (serverId) => {
+      requireCapability(capabilities, serverId, WORKFLOW_NOTIFICATIONS_CAPABILITY, "mobile.workflow.unsupported");
+      return send(serverId, WORKFLOW_NOTIFICATIONS_ROUTE, decodeRemoteWorkflowNotifications, {});
+    },
     listWorkflows: (serverId) => send(serverId, WORKFLOWS_ROUTES.list, decodeRemoteWorkflowList, {}),
     loadWorkflow: (workflowId, serverId) =>
       send(serverId, WORKFLOWS_ROUTES.get, decodeRemoteWorkflowDetail, { workflowId }),
