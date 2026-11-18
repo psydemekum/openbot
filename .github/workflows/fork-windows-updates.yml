@@ -140,6 +140,7 @@ jobs:
 
       - name: Sign and package the installer
         if: steps.release.outputs.build == 'true'
+        timeout-minutes: 12
         shell: pwsh
         env:
           WIN_CSC_LINK: ${{ secrets.OPENBOT_WINDOWS_SIGNING_PFX }}
@@ -157,13 +158,11 @@ jobs:
             if ($certificate.GetNameInfo('SimpleName', $false) -ne $env:FORK_SIGNER) {
               throw 'The configured signing certificate has the wrong subject.'
             }
-            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser')
-            try {
-              $store.Open('ReadWrite')
-              $store.Add([System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData))
-            } finally {
-              $store.Dispose()
-            }
+            $publicCertificate = Join-Path $env:RUNNER_TEMP 'openbot-fork-signer.cer'
+            [IO.File]::WriteAllBytes($publicCertificate, $certificate.RawData)
+            # The ephemeral Windows runner trusts this publisher through its machine store.
+            certutil.exe -f -addstore Root $publicCertificate
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally {
             $certificate.Dispose()
           }
