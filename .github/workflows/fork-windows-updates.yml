@@ -1,0 +1,253 @@
+name: Fork Windows updates
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Fork build revision (1 to 99)
+        type: number
+        default: 1
+      publish:
+        description: Publish the verified installer
+        type: boolean
+        default: false
+
+concurrency:
+  group: fork-windows-updates
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    if: github.repository == 'psydemekum/openbot' && github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 55
+    env:
+      FORK_BRANCH: codex/windows-fork-updates
+      UPSTREAM_REPO: nightly-labs/openbot
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      FORK_SIGNER: OpenBot Fork psydemekum
+    steps:
+      - name: Check out fork release branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: codex/windows-fork-updates
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select the latest stable Windows release
+        id: release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_REVISION: ${{ inputs.revision || 1 }}
+          FORK_PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Get-WindowsRelease($repository) {
+            $json = gh api --paginate --slurp "repos/$repository/releases?per_page=100"
+            if ($LASTEXITCODE -ne 0) { throw "Cannot read releases from $repository." }
+            $pages = ConvertFrom-Json -InputObject ($json -join [Environment]::NewLine) -NoEnumerate
+            foreach ($page in $pages) {
+              foreach ($release in $page) {
+                if (-not $release.draft -and -not $release.prerelease -and
+                    $release.tag_name -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -and
+                    $release.assets.name -contains 'latest.yml' -and
+                    $release.assets.name -contains "OpenBot-$($release.tag_name.Substring(1))-x64.exe") {
+                  $release
+                }
+              }
+            }
+          }
+          $release = Get-WindowsRelease $env:UPSTREAM_REPO |
+            Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
+          if (-not $release) { throw 'No stable Windows desktop release found.' }
+          $original = [version]$release.tag_name.Substring(1)
+          $revision = 0
+          if (-not [int]::TryParse($env:FORK_REVISION, [ref]$revision) -or $revision -lt 1 -or $revision -gt 99) {
+            throw 'The fork revision must be an integer between 1 and 99.'
+          }
+          $patch = [long]$original.Build * 100 + $revision
+          if ($patch -gt 65535) { throw 'The fork patch exceeds the Windows version limit.' }
+          $version = [version]::new($original.Major, $original.Minor, [int]$patch)
+          $previous = Get-WindowsRelease $env:GITHUB_REPOSITORY |
+            Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
+          $testRepo = $env:UPSTREAM_REPO
+          $testTag = $release.tag_name
+          if ($previous) {
+            if ($version -gt [version]$previous.tag_name.Substring(1)) {
+              $testRepo = $env:GITHUB_REPOSITORY
+              $testTag = $previous.tag_name
+            } elseif ($env:FORK_PUBLISH -eq 'true') {
+              Write-Host "Fork v$version is already covered by $($previous.tag_name)."
+              return
+            }
+          }
+          @("build=true", "upstream=$($release.tag_name)", "version=$version", "base_repo=$testRepo", "base_tag=$testTag") |
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: Merge the upstream release tag
+        if: steps.release.outputs.build == 'true'
+        shell: pwsh
+        env:
+          UPSTREAM_TAG: ${{ steps.release.outputs.upstream }}
+        run: |
+          git fetch --no-tags "https://github.com/$env:UPSTREAM_REPO.git" "refs/tags/$($env:UPSTREAM_TAG):refs/upstream/windows"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' merge --no-ff --no-commit refs/upstream/windows
+          if ($LASTEXITCODE -ne 0 -and -not (Test-Path .git/MERGE_HEAD)) { exit $LASTEXITCODE }
+          if (Test-Path .git/MERGE_HEAD) {
+            # The release branch keeps its workflow files. Scheduled jobs run from main.
+            git restore --source=HEAD --staged --worktree -- .github/workflows/
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (git diff --name-only --diff-filter=U) {
+              git status --short
+              throw 'Upstream merge requires resolution on the fork release branch.'
+            }
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit --no-edit
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Set up Bun
+        if: steps.release.outputs.build == 'true'
+        uses: ./.github/actions/setup-bun
+
+      - name: Test workflow file output
+        if: steps.release.outputs.build == 'true'
+        shell: bash
+        run: |
+          bun scripts/workflow-file-output-e2e.ts
+          bun scripts/workflow-team-api-e2e.ts
+
+      - name: Build the Windows application
+        if: steps.release.outputs.build == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FORK_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          bun -e 'const file = Bun.file("package.json"); const pkg = await file.json(); pkg.version = process.env.FORK_VERSION; await Bun.write(file, JSON.stringify(pkg, null, 2) + "\n");'
+          bun scripts/install-remote-desktop-runtime.ts win32 x64
+          bun run voice:prepare-runtime
+          bun run verify:remote-desktop-runtime --windows
+          bun scripts/install-cua-driver.ts win32 x64
+          bun run build
+
+      - name: Sign and package the installer
+        if: steps.release.outputs.build == 'true'
+        shell: pwsh
+        env:
+          WIN_CSC_LINK: ${{ secrets.OPENBOT_WINDOWS_SIGNING_PFX }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.OPENBOT_WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:WIN_CSC_LINK -or -not $env:WIN_CSC_KEY_PASSWORD) {
+            throw 'Configure the fork Windows signing secrets before building a release.'
+          }
+          $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+            [Convert]::FromBase64String($env:WIN_CSC_LINK), $env:WIN_CSC_KEY_PASSWORD,
+            [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+          )
+          try {
+            if ($certificate.GetNameInfo('SimpleName', $false) -ne $env:FORK_SIGNER) {
+              throw 'The configured signing certificate has the wrong subject.'
+            }
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser')
+            try {
+              $store.Open('ReadWrite')
+              $store.Add([System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData))
+            } finally {
+              $store.Dispose()
+            }
+          } finally {
+            $certificate.Dispose()
+          }
+          bun run electron-builder --win nsis --x64 --publish never --config electron-builder.fork-windows.yml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify the signed package and update files
+        if: steps.release.outputs.build == 'true'
+        shell: pwsh
+        env:
+          FORK_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          bun run verify:package:win --require-update-metadata --require-signature
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun run verify:update-artifacts windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $signature = Get-AuthenticodeSignature -LiteralPath "dist/OpenBot-$env:FORK_VERSION-x64.exe"
+          $app = Get-AuthenticodeSignature -LiteralPath dist/win-unpacked/OpenBot.exe
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $app.SignerCertificate.Thumbprint) {
+            throw 'The installer and the installed application must have the same valid signer.'
+          }
+          $config = Get-Content dist/win-unpacked/resources/app-update.yml -Raw
+          if ($config -notmatch '(?m)^owner: psydemekum\r?$' -or $config -notmatch '(?m)^repo: openbot\r?$') {
+            throw 'The packaged application does not use the fork update feed.'
+          }
+
+      - name: Verify upgrade and profile migration
+        if: steps.release.outputs.build == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REPO: ${{ steps.release.outputs.base_repo }}
+          BASE_TAG: ${{ steps.release.outputs.base_tag }}
+        run: |
+          $previousVersion = $env:BASE_TAG.Substring(1)
+          $installer = "OpenBot-$previousVersion-x64.exe"
+          gh release download $env:BASE_TAG --repo $env:BASE_REPO --pattern $installer --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $previousInstaller = Join-Path $env:RUNNER_TEMP $installer
+          bun scripts/release-upgrade-e2e.ts windows "--previous=$env:BASE_TAG" "--previous-artifact=$previousInstaller"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Keep the verified artifacts
+        if: steps.release.outputs.build == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-fork-${{ steps.release.outputs.version }}
+          path: |
+            dist/latest.yml
+            dist/OpenBot-*-x64.exe
+            dist/OpenBot-*-x64.exe.blockmap
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish the verified release
+        if: steps.release.outputs.build == 'true' && (github.event_name == 'schedule' || inputs.publish)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_VERSION: ${{ steps.release.outputs.version }}
+          UPSTREAM_TAG: ${{ steps.release.outputs.upstream }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:FORK_VERSION"
+          $installer = "dist/OpenBot-$env:FORK_VERSION-x64.exe"
+          $commit = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -c 'credential.helper=!gh auth git-credential' push origin "HEAD:refs/heads/$env:FORK_BRANCH"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $json = gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pages = ConvertFrom-Json -InputObject ($json -join [Environment]::NewLine) -NoEnumerate
+          $draft = foreach ($page in $pages) { $page | Where-Object tag_name -eq $tag }
+          if ($draft) {
+            if (-not $draft.draft -or $draft.target_commitish -ne $commit) {
+              throw "Release $tag already exists for another build."
+            }
+          } else {
+            $title = "OpenBot Fork $env:FORK_VERSION (Windows x64)"
+            $notes = "Based on OpenBot $env:UPSTREAM_TAG. Includes workflow file export as text, Markdown and HTML."
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --target $commit --title $title --notes $notes
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          gh release upload $tag --repo $env:GITHUB_REPOSITORY --clobber $installer "$installer.blockmap" dist/latest.yml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
