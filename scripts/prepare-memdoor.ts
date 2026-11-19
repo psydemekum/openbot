@@ -21,7 +21,11 @@ function git(args: string[], directory = source): string {
 }
 
 try {
-  git(["clone", "--filter=blob:none", "--no-checkout", sourceArg ?? upstream, source], scratch);
+  // Memdoor embeds these files as-is. Git Bash needs LF in the workflow scripts.
+  git(
+    ["clone", "--config", "core.autocrlf=false", "--filter=blob:none", "--no-checkout", sourceArg ?? upstream, source],
+    scratch,
+  );
   git(["checkout", "--detach", commit]);
   if (git(["rev-parse", "HEAD"]) !== commit) throw new Error("Unexpected Memdoor revision.");
   git(["apply", "--check", patch]);
