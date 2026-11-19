@@ -1441,3 +1441,217 @@ index 840149a..6cb0cc0 100644
  	home, err := os.UserHomeDir()
  	if err != nil {
  		home = ""
+diff --git a/workflows/team-solve/done.sh b/workflows/team-solve/done.sh
+index 1184568..95b7d33 100755
+--- a/workflows/team-solve/done.sh
++++ b/workflows/team-solve/done.sh
+@@ -5,7 +5,7 @@
+ # target (gateway/target_guard.go).
+ set -u
+ step="$1"; r="$2"; miss=0
+-w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+ no() { printf 'not done: %s\n' "$1"; miss=1; }
+ # section <file> <heading>: the lines under "## <heading>", comments and blanks dropped.
+ section() { sed -n "/^## $2\$/,/^## /p" "$1" | sed '1d;/^## /d;/^<!--.*-->$/d;/^[[:space:]]*$/d'; }
+diff --git a/workflows/team-solve/steps/baseline.yaml b/workflows/team-solve/steps/baseline.yaml
+index f94d78f..6aeb37b 100644
+--- a/workflows/team-solve/steps/baseline.yaml
++++ b/workflows/team-solve/steps/baseline.yaml
+@@ -10,7 +10,7 @@ requires:
+   - table_pattern: settle
+ command: |
+   r=$(pwd)/.memdoor/runs/team-solve-{{.partition}}
+-  w=$(pwd)/.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=$(pwd)/.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   [ -s "$r/base.txt" ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "baseline: not in git, none taken"; exit 0; }
+   t="$r/baseline-tree"
+   git worktree add -q --detach "$t" "$(cat "$r/base.txt")" 2>/dev/null || { echo "baseline: no clean copy, none taken"; exit 0; }
+diff --git a/workflows/team-solve/steps/judge-rule.yaml b/workflows/team-solve/steps/judge-rule.yaml
+index dea9521..f9b9ffa 100644
+--- a/workflows/team-solve/steps/judge-rule.yaml
++++ b/workflows/team-solve/steps/judge-rule.yaml
+@@ -11,7 +11,7 @@ requires:
+   - table_pattern: judge
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   v=$(bash "$w/verdict.sh" "$r/verdict.md")
+   if [ "$v" = PASS ] || { [ "$v" = none ] && [ "$(cat "$r/final-status.txt")" = 0 ]; }; then echo PASS; else echo FAIL; fi
+ timeout: 1m
+diff --git a/workflows/team-solve/steps/judge.yaml b/workflows/team-solve/steps/judge.yaml
+index 3086d03..cbc33a0 100644
+--- a/workflows/team-solve/steps/judge.yaml
++++ b/workflows/team-solve/steps/judge.yaml
+@@ -5,7 +5,13 @@ type: llm
+ # check (they decide), and when the Check passed and the review passed with
+ # no repair: the judge is for what a command cannot settle, and for a
+ # repaired change.
+-when: "! grep -qx samples .memdoor/runs/team-solve-{{.partition}}/check-kind.txt && { [ \"$(cat .memdoor/runs/team-solve-{{.partition}}/test-status.txt)\" != 0 ] || [ -s .memdoor/runs/team-solve-{{.partition}}/repair.md ] || [ \"$(bash $([ -d .memdoor/workflows/team-solve ] && echo .memdoor/workflows/team-solve || echo $HOME/.memdoor/workflows/team-solve)/verdict.sh .memdoor/runs/team-solve-{{.partition}}/review.md)\" != PASS ]; }"
++when: >-
++  w=.memdoor/workflows/team-solve;
++  [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve";
++  ! grep -qx samples .memdoor/runs/team-solve-{{.partition}}/check-kind.txt && {
++  [ "$(cat .memdoor/runs/team-solve-{{.partition}}/test-status.txt)" != 0 ]
++  || [ -s .memdoor/runs/team-solve-{{.partition}}/repair.md ]
++  || [ "$(bash "$w/verdict.sh" .memdoor/runs/team-solve-{{.partition}}/review.md)" != PASS ]; }
+ system: "You answer in this one message. You have no tools: you cannot open a file, list a directory or run a command, and nothing you write will be run. Everything you need is in the message. Do not say what you will look at: answer. Start your answer with the line verdict: PASS or verdict: FAIL."
+ requires:
+   - table_pattern: recheck
+diff --git a/workflows/team-solve/steps/keep.yaml b/workflows/team-solve/steps/keep.yaml
+index 0b3cbb8..3650f3a 100644
+--- a/workflows/team-solve/steps/keep.yaml
++++ b/workflows/team-solve/steps/keep.yaml
+@@ -11,7 +11,7 @@ requires:
+   - table_pattern: judge-score
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   direct=$(cat "$r/direct-status.txt" 2>/dev/null)
+   final=$(cat "$r/final-status.txt" 2>/dev/null)
+   # The judge's answer is judge-score's pass (#160): the decision model's
+diff --git a/workflows/team-solve/steps/pick.yaml b/workflows/team-solve/steps/pick.yaml
+index 72840b1..b399bd4 100644
+--- a/workflows/team-solve/steps/pick.yaml
++++ b/workflows/team-solve/steps/pick.yaml
+@@ -13,7 +13,7 @@ requires:
+   - table_pattern: save-c
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   atts=""; for x in a b c; do [ -s "$r/$x.patch" ] && atts="$atts $x"; done
+   [ -n "$atts" ] || { echo "picked: nothing (no attempt changed the tree)" | tee "$r/pick.txt"; exit 0; }
+   : > "$r/pick-matrix.txt"
+diff --git a/workflows/team-solve/steps/problem.yaml b/workflows/team-solve/steps/problem.yaml
+index 14e75fa..86cdc60 100644
+--- a/workflows/team-solve/steps/problem.yaml
++++ b/workflows/team-solve/steps/problem.yaml
+@@ -9,7 +9,7 @@ type: command
+ command: |
+   set -e
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   mkdir -p "$r"
+   if [ ! -s "$r/prompt.md" ]; then
+     if [ ! -f task.md ] && [ -z "$(ls -A | grep -vxE '\.memdoor|\.git' || true)" ]; then
+diff --git a/workflows/team-solve/steps/recheck.yaml b/workflows/team-solve/steps/recheck.yaml
+index 725e07a..e5c3e5b 100644
+--- a/workflows/team-solve/steps/recheck.yaml
++++ b/workflows/team-solve/steps/recheck.yaml
+@@ -6,7 +6,7 @@ requires:
+   - table_pattern: repair
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   bash "$w/changes.sh" "$r"
+   bash "$w/check.sh" "$r" "$r/final-check.log"
+   result=$?
+diff --git a/workflows/team-solve/steps/review-rule.yaml b/workflows/team-solve/steps/review-rule.yaml
+index 5c7de10..00b9a50 100644
+--- a/workflows/team-solve/steps/review-rule.yaml
++++ b/workflows/team-solve/steps/review-rule.yaml
+@@ -9,7 +9,7 @@ requires:
+   - table_pattern: review
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   v=$(bash "$w/verdict.sh" "$r/review.md")
+   if [ "$v" = PASS ] || { [ "$v" = none ] && [ "$(cat "$r/test-status.txt")" = 0 ]; }; then echo PASS; else echo FAIL; fi
+ timeout: 1m
+diff --git a/workflows/team-solve/steps/save-a.yaml b/workflows/team-solve/steps/save-a.yaml
+index 6dbdd29..ee0ba7c 100644
+--- a/workflows/team-solve/steps/save-a.yaml
++++ b/workflows/team-solve/steps/save-a.yaml
+@@ -4,7 +4,7 @@ requires:
+   - table_pattern: direct-a
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   bash "$w/snapshot.sh" save "$r" a
+   [ -x "$r/attempt-a" ] && echo "attempt a: check written" || echo "attempt a: no check written"
+   bash "$w/snapshot.sh" reset "$r"
+diff --git a/workflows/team-solve/steps/save-b.yaml b/workflows/team-solve/steps/save-b.yaml
+index be9697b..9206293 100644
+--- a/workflows/team-solve/steps/save-b.yaml
++++ b/workflows/team-solve/steps/save-b.yaml
+@@ -4,7 +4,7 @@ requires:
+   - table_pattern: direct-b
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   bash "$w/snapshot.sh" save "$r" b
+   [ -x "$r/attempt-b" ] && echo "attempt b: check written" || echo "attempt b: no check written"
+   bash "$w/snapshot.sh" reset "$r"
+diff --git a/workflows/team-solve/steps/save-c.yaml b/workflows/team-solve/steps/save-c.yaml
+index 521e37f..1e43a2a 100644
+--- a/workflows/team-solve/steps/save-c.yaml
++++ b/workflows/team-solve/steps/save-c.yaml
+@@ -4,7 +4,7 @@ requires:
+   - table_pattern: direct-c
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   bash "$w/snapshot.sh" save "$r" c
+   [ -x "$r/attempt-c" ] && echo "attempt c: check written" || echo "attempt c: no check written"
+   bash "$w/snapshot.sh" reset "$r"
+diff --git a/workflows/team-solve/steps/settle.yaml b/workflows/team-solve/steps/settle.yaml
+index b3f745b..9581b11 100644
+--- a/workflows/team-solve/steps/settle.yaml
++++ b/workflows/team-solve/steps/settle.yaml
+@@ -8,7 +8,7 @@ requires:
+   - table_pattern: plan
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   bash "$w/settle.sh" "$r"
+   [ -f "$r/notes.md" ] || printf '# Notes, run {{.partition}}\n\n## Solver decision\n\n## Review\n\n## Repair\n' > "$r/notes.md"
+   sed -n '/^## Check/,/^## Done when/p' "$r/task.md"
+diff --git a/workflows/team-solve/steps/test-0.yaml b/workflows/team-solve/steps/test-0.yaml
+index b589759..573de1e 100644
+--- a/workflows/team-solve/steps/test-0.yaml
++++ b/workflows/team-solve/steps/test-0.yaml
+@@ -10,7 +10,7 @@ requires:
+   - table_pattern: reproduce
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   # The clean copy (baseline.yaml) has served the reproduction; it goes.
+   [ -d "$r/baseline-tree" ] && git worktree remove --force "$r/baseline-tree" 2>/dev/null
+   bash "$w/changes.sh" "$r"
+diff --git a/workflows/team-solve/steps/test.yaml b/workflows/team-solve/steps/test.yaml
+index cdc2702..0773575 100644
+--- a/workflows/team-solve/steps/test.yaml
++++ b/workflows/team-solve/steps/test.yaml
+@@ -8,7 +8,7 @@ requires:
+   - table_pattern: solve
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   bash "$w/changes.sh" "$r"
+   bash "$w/check.sh" "$r" "$r/test-output.log"
+   result=$?
+diff --git a/workflows/team-solve/steps/verify.yaml b/workflows/team-solve/steps/verify.yaml
+index 5b9bf94..b2af905 100644
+--- a/workflows/team-solve/steps/verify.yaml
++++ b/workflows/team-solve/steps/verify.yaml
+@@ -6,7 +6,7 @@ requires:
+   - table_pattern: keep
+ command: |
+   r=.memdoor/runs/team-solve-{{.partition}}
+-  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
++  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
+   [ -d "$r/baseline-tree" ] && git worktree remove --force "$r/baseline-tree" 2>/dev/null
+   bash "$w/changes.sh" "$r"
+   bash "$w/check.sh" "$r" "$r/final-check.log"
