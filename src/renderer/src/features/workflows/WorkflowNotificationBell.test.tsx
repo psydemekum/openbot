@@ -26,6 +26,6 @@ it("opens the selected notification with its workflow and chat intact", async ()
   const rows = await within(list).findAllByRole("button");
   expect(rows[0]).toHaveTextContent("Ready");
   expect(rows[1]).toHaveTextContent("Yesterday");
-  fireEvent.click(rows[0]);
+  fireEvent.click(within(list).getByRole("button", { name: /Ready/ }));
   expect(onOpen).toHaveBeenCalledWith(item);
 });

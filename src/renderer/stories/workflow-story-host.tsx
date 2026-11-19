@@ -161,6 +161,7 @@ function storyWorkflowHost(workflows: readonly StoryWorkflow[]): WorkflowHost {
     mediaTransparentSupported: () => true,
     mediaSizeSupported: () => true,
     filesSupported: () => true,
+    fileAgentSupported: () => true,
     downloadFile: async () => {},
     pictures: async () => [],
     // A story keeps the picture only in the page: its preview is a blob address.

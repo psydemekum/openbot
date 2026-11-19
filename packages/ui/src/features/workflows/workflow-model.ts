@@ -13,6 +13,7 @@ import {
   type ProviderAccountStatus,
   type StoredFileRow,
   WORKFLOW_NODE_KINDS,
+  type WorkflowFileFolder,
   type WorkflowFileResult,
   type WorkflowMediaAspect,
   type WorkflowMediaKind,
@@ -161,6 +162,8 @@ export interface WorkflowCatalogs {
   media?: ((attachmentId: string, kind: WorkflowMediaKind) => string | undefined) | undefined;
   /** Saves a file result. HTML is downloaded, never injected into the canvas. */
   downloadFile?: ((file: WorkflowFileResult) => Promise<void>) | undefined;
+  fileAgent?: boolean | undefined;
+  chooseFileFolder?: ((nodeId: string) => Promise<WorkflowFileFolder | null>) | undefined;
   /**
    * Sends a picture from the computer to the host and answers it as a Library file. The host shows
    * why it refused one. Without it, a file from the computer stays in the page.

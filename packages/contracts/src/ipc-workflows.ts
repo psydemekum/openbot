@@ -99,7 +99,9 @@ export type WorkflowFieldValue = string | number | boolean;
  *   workspace), `action` (a `WorkflowSlackAction`), `placeId` (the channel of `post`) and `emoji` (the
  *   emoji of `react`). For `chat-channel`: `channelId`. The result shows in the channel as a note; no
  *   task starts. For `file`: `format` (txt, md, html), `filename` (basename with {{date}},
- *   {{datum}} or {{run}}), `notify` (boolean). Requires workflows-files-v1; output is a WorkflowFileResult as JSON.
+ *   {{datum}} or {{run}}), `notify` (boolean), optional `agentId` and `prompt`.
+ *   `fileSource` selects agent authoring or direct export. `folderGrantId` and `folderName` refer
+ *   to a folder chosen on the host. Requires workflows-files-v1; output is a WorkflowFileResult as JSON.
  * - prompt: `text`.
  * - image: `media` (a `WorkflowMediaKind`, "image" when absent), `prompt`, `aspect` (one of
  *   `WORKFLOW_MEDIA_ASPECTS`, or `WORKFLOW_MEDIA_CUSTOM_ASPECT` for an image with `width` and `height`
@@ -116,6 +118,11 @@ export type WorkflowFieldValue = string | number | boolean;
  * Every other field is view state, such as a colour or a font, and the host keeps it as it is.
  */
 export type WorkflowFields = Record<string, WorkflowFieldValue>;
+
+export interface WorkflowFileFolder {
+  id: string;
+  name: string;
+}
 
 export const WORKFLOW_MEDIA_KINDS = ["image", "video"] as const;
 export type WorkflowMediaKind = (typeof WORKFLOW_MEDIA_KINDS)[number];
@@ -619,13 +626,14 @@ export function workflowGraphProblem(graph: WorkflowGraph): WorkflowGraphProblem
   return workflowGraphProblemAt(graph)?.problem ?? null;
 }
 
-/** The agent of an agent node, or null for another kind or an agent node with no agent yet. */
+/** The agent who does a task or writes a file, when the node names one. */
 export function nodeAgentId(node: WorkflowNode): string | null {
   const agentId = node.fields.agentId;
-  return node.kind === "agent" && typeof agentId === "string" && agentId.length > 0 ? agentId : null;
+  const mayUseAgent = node.kind === "agent" || (node.kind === "output" && node.fields.target === "file");
+  return mayUseAgent && typeof agentId === "string" && agentId.length > 0 ? agentId : null;
 }
 
-/** The agent of each agent node of the graph. */
+/** The agents that the graph uses. */
 export function graphAgentIds(graph: WorkflowGraph): string[] {
   return graph.nodes.flatMap((node) => nodeAgentId(node) ?? []);
 }

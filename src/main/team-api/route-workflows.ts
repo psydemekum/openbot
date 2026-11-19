@@ -119,7 +119,15 @@ function adminNodes(graph: WorkflowGraph): Map<string, string> {
   const nodes = new Map<string, string>();
   for (const node of graph.nodes) {
     const kind = node.kind === "trigger" ? node.fields.trigger : node.kind === "output" ? node.fields.target : null;
-    if (kind !== "github" && kind !== "discord" && kind !== "telegram" && kind !== "slack" && kind !== "chat-channel")
+    const hostFolder = kind === "file" && Boolean(node.fields.folderGrantId);
+    if (
+      !hostFolder &&
+      kind !== "github" &&
+      kind !== "discord" &&
+      kind !== "telegram" &&
+      kind !== "slack" &&
+      kind !== "chat-channel"
+    )
       continue;
     const fields = Object.keys(node.fields)
       .sort()

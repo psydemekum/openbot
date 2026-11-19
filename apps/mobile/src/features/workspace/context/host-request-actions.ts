@@ -696,6 +696,7 @@ export function createHostRequestChecks(capabilities: ServerCapabilities): HostR
     canUseWorkflows: (serverId) => has(serverId, WORKFLOWS_CAPABILITY),
     canReadWorkflowNotifications: (serverId) => has(serverId, "workflow-notifications-v1"),
     canUseWorkflowFiles: (serverId) => has(serverId, "workflows-files-v1"),
+    canUseWorkflowFileAgent: (serverId) => has(serverId, "workflows-file-agent-v1"),
     canUseWorkflowGitHub: (serverId) =>
       has(serverId, WORKFLOWS_CAPABILITY) && has(serverId, WORKFLOWS_GITHUB_CAPABILITY),
     canUseWorkflowChats: (serverId) =>

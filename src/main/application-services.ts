@@ -30,6 +30,7 @@ import {
   type RoutineResultsHandle,
   routineResultNoticeEvent,
 } from "../backend/routine-results/routine-results";
+import { storeWorkflowFile } from "../backend/workflows/file-storage";
 import { clearFlatBackground } from "../backend/workflows/flat-background";
 import { WorkflowGitHubStore } from "../backend/workflows/workflow-github-store";
 import { WorkflowRunStore } from "../backend/workflows/workflow-run-store";
@@ -2677,7 +2678,9 @@ export async function createApplicationServices({
       filePath: (attachmentId) =>
         mailbox.resolveAttachment(attachmentId).pipe(Effect.map((file) => file?.path ?? null)),
       storeFile: (input) =>
-        mailbox.storeGeneratedAttachment(input).pipe(Effect.ensuring(Effect.sync(() => storageUsage.invalidate()))),
+        storeWorkflowFile(app.getPath("userData"), mailbox, input).pipe(
+          Effect.ensuring(Effect.sync(() => storageUsage.invalidate())),
+        ),
       stopDelivery: stopHandoff,
       generateText: (request) =>
         service.generateWorkflowText(request).pipe(

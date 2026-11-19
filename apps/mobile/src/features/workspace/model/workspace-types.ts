@@ -1156,6 +1156,7 @@ export interface MobileWorkspaceContextValue {
   /** True when the host advertises `workflows-github-v1`: it runs GitHub triggers and outputs. */
   canUseWorkflowGitHub: (serverId: string) => boolean;
   canUseWorkflowFiles: (serverId: string) => boolean;
+  canUseWorkflowFileAgent: (serverId: string) => boolean;
   /**
    * True when the host advertises `workflows-chats-v1` and `routine-results-v1`: an owner or admin adds
    * and changes Telegram and Slack triggers and outputs, with the chats of the routine-results options.
@@ -1315,6 +1316,7 @@ export type MobileWorkspaceCapabilityCheck =
   | "canUseWorkflows"
   | "canUseWorkflowGitHub"
   | "canUseWorkflowFiles"
+  | "canUseWorkflowFileAgent"
   | "canReadWorkflowNotifications"
   | "canUseWorkflowChats"
   | "canReadServerStorage"

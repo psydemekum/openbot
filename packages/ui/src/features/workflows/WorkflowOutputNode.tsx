@@ -1,17 +1,21 @@
 /** An output: the end of a branch, which sends the result. */
 
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { WORKFLOW_FILE_FORMATS, type WorkflowFileFormat, workflowFileResult } from "@openbot/contracts/ipc";
 import type { AppTranslate } from "@openbot/i18n";
-import { Bell, Button, CircleCheck, FileText, Hash, Play, Send, Skeleton } from "@openbot/ui";
+import { Bell, Bot, Button, CircleCheck, FileText, Folder, Hash, Play, Send, Skeleton, Textarea } from "@openbot/ui";
 import { createSignal, Show, untrack } from "solid-js";
 import { useText } from "../../text";
+import { AgentPill } from "./WorkflowAgentNode";
 import { resultValue, useBoard, type WfnPortType } from "./workflow-board";
 import { DISCORD_OUTPUT_DEFAULTS, DiscordIcon, DiscordOutputRows } from "./workflow-discord-parts";
 import { GITHUB_OUTPUT_DEFAULTS, GitHubIcon, GitHubOutputRows, useGitHubOutputReady } from "./workflow-github-parts";
 import {
   asBoolean,
+  asString,
   type Choice,
   FailureAlert,
+  Field,
   NodeShell,
   NodeToolbar,
   oneOf,
@@ -111,6 +115,34 @@ export function OutputNode(props: {
     return HOST_TARGETS.includes(value) ? outputs?.includes(value) === true : (outputs?.includes(value) ?? true);
   };
   const [filename, setFilename] = useTextField(() => props.id, "filename", "");
+  const [prompt, setPrompt] = useTextField(() => props.id, "prompt", "");
+  const [agentId] = useField(() => props.id, "agentId", "", asString);
+  const [fileSource] = useField(() => props.id, "fileSource", "", asString);
+  const [folderGrantId] = useField(() => props.id, "folderGrantId", "", asString);
+  const [folderName] = useField(() => props.id, "folderName", "", asString);
+  const [pickingFolder, setPickingFolder] = createSignal(false);
+  const [folderError, setFolderError] = createSignal("");
+  const author = () => board.catalogs().agents.find((entry) => entry.id === agentId());
+  const writesWithAgent = () => target() === "file" && (fileSource() === "agent" || Boolean(agentId()));
+  const validAuthor = () => board.catalogs().fileAgent && author() && prompt().trim();
+  const chooseFolder = async (choice: string) => {
+    setFolderError("");
+    if (choice === "library") {
+      board.setFields(props.id, { folderGrantId: "", folderName: "" });
+      return;
+    }
+    const choose = board.catalogs().chooseFileFolder;
+    if (!choose || pickingFolder()) return;
+    setPickingFolder(true);
+    try {
+      const folder = await choose(props.id);
+      if (folder) board.setFields(props.id, { folderGrantId: folder.id, folderName: folder.name });
+    } catch (error) {
+      setFolderError(errorMessage(error, t("error.workflow.fileFolderFailed")));
+    } finally {
+      setPickingFolder(false);
+    }
+  };
   const [format, setFormat] = useField<WorkflowFileFormat>(
     () => props.id,
     "format",
@@ -129,7 +161,9 @@ export function OutputNode(props: {
   const isGitHub = () => target() === "github";
   const inputs = () => (HOST_TARGETS.includes(target()) || target() === "file" ? TEXT_INPUTS : OUTPUT_INPUTS);
   const runDisabled = () =>
-    locked() || !inputs().some((type) => board.connected(props.id, "in", type)) || (isGitHub() && !githubReady());
+    locked() ||
+    (writesWithAgent() ? !validAuthor() : !inputs().some((type) => board.connected(props.id, "in", type))) ||
+    (isGitHub() && !githubReady());
   const shown = () => resultValue(board.shown(props.id));
   const file = () => (target() === "file" ? workflowFileResult(shown()) : undefined);
   const [saving, setSaving] = createSignal({ busy: false, error: "" });
@@ -165,7 +199,7 @@ export function OutputNode(props: {
       icon={<Send aria-hidden="true" />}
       kind="output"
       inputs={inputs()}
-      requires
+      requires={!writesWithAgent()}
       style={{ "--wfn-width": "320px" }}
       toolbar={<NodeToolbar id={props.id} name={t("workflow.output.name")} locked={locked()} onLock={setLocked} />}
     >
@@ -214,6 +248,55 @@ export function OutputNode(props: {
             disabled={locked()}
             onChange={setFilename}
           />
+          <Show
+            when={board.catalogs().chooseFileFolder}
+            fallback={
+              <StaticRow name={t("workflow.output.fileLocation")}>
+                <span class="wfn-row-text">{folderName() || t("workflow.output.fileLibrary")}</span>
+              </StaticRow>
+            }
+          >
+            <SettingRow
+              name={t("workflow.output.fileLocation")}
+              value={folderGrantId() ? "selected" : "library"}
+              placeholder={folderName()}
+              disabled={locked() || pickingFolder()}
+              onChange={chooseFolder}
+              choices={[
+                {
+                  value: "library",
+                  label: t("workflow.output.fileLibrary"),
+                  icon: () => <FileText aria-hidden="true" />,
+                },
+                {
+                  value: "choose",
+                  label: t("workflow.output.chooseFolder"),
+                  icon: () => <Folder aria-hidden="true" />,
+                },
+              ]}
+            />
+          </Show>
+          <Show when={board.catalogs().fileAgent || writesWithAgent()}>
+            <SettingRow
+              name={t("workflow.output.fileContent")}
+              value={writesWithAgent() ? "agent" : "input"}
+              disabled={locked() || !board.catalogs().fileAgent}
+              onChange={(value) =>
+                board.setFields(
+                  props.id,
+                  value === "agent" ? { fileSource: value } : { fileSource: value, agentId: "" },
+                )
+              }
+              choices={[
+                {
+                  value: "input",
+                  label: t("workflow.output.fileFromInput"),
+                  icon: () => <FileText aria-hidden="true" />,
+                },
+                { value: "agent", label: t("workflow.output.fileFromAgent"), icon: () => <Bot aria-hidden="true" /> },
+              ]}
+            />
+          </Show>
           <SettingRow
             name={t("workflow.output.alsoNotify")}
             value={notify() ? "yes" : "no"}
@@ -227,6 +310,11 @@ export function OutputNode(props: {
           <SettingsFoot>
             <p class="wfn-settings-help">{t("workflow.output.filenameHint", { date: "{{date}}", run: "{{run}}" })}</p>
           </SettingsFoot>
+          <Show when={folderError()}>
+            <p class="wfn-alert" role="alert">
+              {folderError()}
+            </p>
+          </Show>
         </Show>
         <Show when={target() === "notify"}>
           <InputRow
@@ -249,6 +337,27 @@ export function OutputNode(props: {
           <SlackOutputRows id={props.id} locked={locked()} />
         </Show>
       </SettingRows>
+      <Show when={writesWithAgent()}>
+        <Field class="wfn-field-task">
+          <Textarea
+            class="wfn-input"
+            aria-label={t("workflow.output.filePrompt")}
+            placeholder={t("workflow.output.filePrompt")}
+            maxlength={INPUT_LIMITS.workflowNodeText}
+            readonly={locked() || !board.catalogs().fileAgent}
+            value={prompt()}
+            onValueChange={setPrompt}
+          />
+          <div class="wfn-field-foot">
+            <AgentPill
+              agent={author()}
+              removed={agentId() !== "" && !author()}
+              disabled={locked() || !board.catalogs().fileAgent}
+              onChange={(agent) => board.setFields(props.id, { agentId: agent.id })}
+            />
+          </div>
+        </Field>
+      </Show>
       <Show
         when={shown()}
         fallback={

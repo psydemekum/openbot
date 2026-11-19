@@ -9,6 +9,7 @@ import {
   type AttachmentSummary,
   STORAGE_CAPABILITY,
   type TeamRealtimeEvent,
+  WORKFLOWS_FILE_AGENT_CAPABILITY,
   WORKFLOWS_FILES_CAPABILITY,
   type WorkflowMediaKind,
 } from "@openbot/contracts/ipc";
@@ -311,6 +312,7 @@ export function webWorkflowHost(options: WebWorkflowHostOptions): WorkflowHost {
     },
     githubSupported,
     filesSupported: () => has(WORKFLOWS_FILES_CAPABILITY),
+    fileAgentSupported: () => has(WORKFLOWS_FILE_AGENT_CAPABILITY),
     async downloadFile(file) {
       saveFile(await options.downloadFile(file.id));
     },

@@ -8,6 +8,12 @@ export const messages = defineMessages("error.workflow", {
   "error.workflow.fileName":
     "Use a file name without folders or special characters, with only the date and run placeholders.",
   "error.workflow.fileUnavailable": "This host cannot store workflow files.",
+  "error.workflow.fileFolderFailed":
+    "The workflow file could not be saved in the selected folder. Check the folder or select it again.",
+  "error.workflow.fileAgentPrompt": "Enter a prompt for the agent that writes this file.",
+  "error.workflow.fileAgentEmpty": "The agent returned no file content.",
+  "error.workflow.fileFolderLocal":
+    "Select the export folder in the desktop app on the computer that runs this workflow.",
   "error.workflow.fileFailed": "The workflow file could not be saved. Check available storage and try again.",
   "error.workflow.fileInterrupted":
     "OpenBot stopped while saving this file. Check the Library before running it again.",

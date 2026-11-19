@@ -10,3 +10,4 @@
 // A process restart fails an unfinished file step; it never silently repeats a write.
 // Clients offer this output only when the host advertises this capability.
 export const WORKFLOWS_FILES_CAPABILITY = "workflows-files-v1";
+export const WORKFLOWS_FILE_AGENT_CAPABILITY = "workflows-file-agent-v1";

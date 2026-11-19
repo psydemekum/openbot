@@ -1,14 +1,16 @@
 // Runs file outputs on the real workflow service, SQLite and attachment store in a temporary profile.
 // Run: bun scripts/workflow-file-output-e2e.ts
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { type WorkflowFields, type WorkflowStep, workflowFileResult } from "@openbot/contracts/ipc";
 import { Effect } from "effect";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import { MailboxStore } from "../src/backend/mailbox-store";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
+import { grantWorkflowExportFolder, storeWorkflowFile } from "../src/backend/workflows/file-storage";
 import { WorkflowGitHubStore } from "../src/backend/workflows/workflow-github-store";
 import { WorkflowRunStore } from "../src/backend/workflows/workflow-run-store";
 import { WorkflowStore } from "../src/backend/workflows/workflow-store";
@@ -23,6 +25,8 @@ let service: WorkflowsHandle | undefined;
 let notices = 0;
 let writes = 0;
 let failWrite = false;
+let handoff: { agentId: string; text: string } | undefined;
+let agentAnswer = "";
 let request = 0;
 const report = resolve(".openbot-build/workflow-file-output-e2e/report.json");
 
@@ -33,11 +37,12 @@ async function waitForStep(workflows: WorkflowsHandle, runId: string): Promise<W
     const step = detail.steps.find((candidate) => candidate.nodeId === "output");
     if (step && detail.run.status !== "running") return step;
     if (Date.now() > deadline) throw new Error("The file run did not finish.");
+    await runCauseEffect(workflows.sweep());
     await new Promise<void>((done) => setImmediate(done));
   }
 }
 
-async function run(text: string | string[], fields: WorkflowFields) {
+async function run(text: string | string[], fields: WorkflowFields, folderPath?: string) {
   assert.ok(service);
   const prompts = (typeof text === "string" ? [text] : text).map((value, index) => ({
     id: `prompt-${index}`,
@@ -46,6 +51,14 @@ async function run(text: string | string[], fields: WorkflowFields) {
     fields: { text: value },
   }));
   const created = await runCauseEffect(service.create({ title: "File output check" }));
+  if (folderPath) {
+    const folder = await grantWorkflowExportFolder(
+      directory,
+      { workflowId: created.summary.id, nodeId: "output" },
+      folderPath,
+    );
+    fields = { ...fields, folderGrantId: folder.id, folderName: folder.name };
+  }
   const saved = await runCauseEffect(
     service.saveGraph({
       workflowId: created.summary.id,
@@ -87,14 +100,20 @@ function openService() {
       runs: new WorkflowRunStore({ database }),
       github: new WorkflowGitHubStore({ database }),
       githubApp: () => null,
-      delivery: () => null,
-      turnAnswer: () => null,
-      sendHandoff: () => Effect.fail({ cause: new Error("No agent is used.") }),
+      delivery: () => ({ status: "completed", turnId: "file-turn", error: null }),
+      turnAnswer: () => agentAnswer,
+      sendHandoff: ({ agentId, text }) =>
+        Effect.sync(() => {
+          handoff = { agentId, text };
+          return `file-delivery-${request}`;
+        }),
       stopDelivery: () => Effect.void,
       generateText: () => Effect.fail({ message: "No model is used." }),
       storeFile: (input) => {
         writes++;
-        return failWrite ? Effect.fail({ cause: new Error("Disk full") }) : mailbox.storeGeneratedAttachment(input);
+        return failWrite
+          ? Effect.fail({ cause: new Error("Disk full") })
+          : storeWorkflowFile(directory, mailbox, input);
       },
       notify: () => {
         notices++;
@@ -140,10 +159,58 @@ try {
   const verbatim = "    Grüezi\r\n\r\n";
   assert.equal((await contents(await run(verbatim, {}))).text, verbatim);
   assert.equal((await contents(await run(["first", "  second\n"], {}))).text, "first\n\n  second\n");
+  const exact = "x".repeat(INPUT_LIMITS.workflowStepInput);
+  const half = "x".repeat((exact.length - 2) / 2);
+  assert.equal((await contents(await run([half, half], {}))).text, `${half}\n\n${half}`);
   const beforeOversize = writes;
-  assert.equal((await run(["a".repeat(18_000), "b".repeat(18_000)], {})).status, "failed");
+  assert.equal((await run([half, `${half}x`], {})).status, "failed");
   assert.equal(writes, beforeOversize);
   checks.push("File input preserves whitespace and rejects oversized exports without writing a partial file");
+  const agentFields = { agentId: "writer", prompt: "Fasse das Ergebnis zusammen.", format: "md" };
+  agentAnswer = "    Ergebnis: Zürich\r\n\r\n";
+  const authored = await contents(await run(verbatim, agentFields));
+  assert.equal(authored.text, agentAnswer);
+  assert.equal(handoff?.agentId, "writer");
+  assert.ok(handoff?.text.includes(agentFields.prompt));
+  assert.ok(handoff?.text.includes(`${verbatim}\n--- end input ---`));
+  const beforeAgentFailure = writes;
+  assert.equal((await run("Input", { ...agentFields, prompt: "" })).status, "failed");
+  agentAnswer = "";
+  assert.equal((await run("Input", agentFields)).status, "failed");
+  agentAnswer = `${exact}x`;
+  assert.equal((await run("Input", agentFields)).status, "failed");
+  assert.equal(writes, beforeAgentFailure);
+  checks.push("The selected agent gets the prompt and input; missing and oversized answers make no file");
+  const destination = join(directory, "Grüezi");
+  await mkdir(destination);
+  const target = join(destination, "report.md");
+  const fileFields = { filename: "report", format: "md" };
+  const firstCopyStep = await run(verbatim, fileFields, destination);
+  const firstCopy = await contents(firstCopyStep);
+  assert.equal(await readFile(target, "utf8"), firstCopy.text);
+  const reused = await grantWorkflowExportFolder(
+    directory,
+    { workflowId: "other-workflow", nodeId: "output" },
+    destination,
+  );
+  assert.equal((await run("Forbidden", { ...fileFields, folderGrantId: reused.id })).status, "failed");
+  agentAnswer = "  second copy\r\n";
+  const copy = await contents(await run("Input", { ...fileFields, agentId: "writer", prompt: "Write." }, destination));
+  assert.equal(await readFile(target, "utf8"), verbatim);
+  const copyName = (await readdir(destination)).find((name) => name !== "report.md");
+  assert.ok(copyName);
+  assert.equal(await readFile(join(destination, copyName), "utf8"), copy.text);
+  assert.equal(copy.text, agentAnswer);
+  await rename(destination, join(directory, "Old folder"));
+  await mkdir(destination);
+  const moved = await runCauseEffect(
+    service.startRun({ workflowId: firstCopyStep.workflowId, requestId: "replaced-folder" }),
+  );
+  assert.equal((await waitForStep(service, moved.run.id)).status, "failed");
+  assert.deepEqual(await readdir(destination), []);
+  checks.push(
+    "Local copies match the attachment, never overwrite, and reject grants for another node or a replaced folder",
+  );
   const invalid: WorkflowFields[] = [
     { filename: "../escape" },
     { filename: "C:\\escape" },

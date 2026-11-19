@@ -659,6 +659,7 @@ import type {
   SaveWorkflowGraphInput,
   StartWorkflowRunInput,
   WorkflowDetail,
+  WorkflowFileFolder,
   WorkflowGraph,
   WorkflowMediaCatalog,
   WorkflowMediaCredits,
@@ -2012,6 +2013,7 @@ export const IPC_ENDPOINTS = {
     decide: scopedRequest<DecideWorkflowStepInput, void>()("workflows:decide"),
     runs: scopedRequest<WorkflowRunsInput, WorkflowRunPage>()("workflows:runs"),
     run: scopedRequest<string, WorkflowRunDetail>()("workflows:run"),
+    chooseFileFolder: scopedRequest<WorkflowTriggerInput, WorkflowFileFolder | null>()("workflows:choose-file-folder"),
     /** Makes a new signing secret for a webhook trigger; the first one also makes its address. */
     rotateWebhookSecret: scopedRequest<WorkflowTriggerInput, WorkflowWebhookSecret>()(
       "workflows:rotate-webhook-secret",

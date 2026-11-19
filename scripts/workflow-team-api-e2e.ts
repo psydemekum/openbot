@@ -48,7 +48,11 @@ import type {
   WorkflowMediaPriceRequest,
   WorkflowNode,
 } from "@openbot/contracts/ipc";
-import { WORKFLOWS_FILES_CAPABILITY, workflowFileResult } from "@openbot/contracts/ipc";
+import {
+  WORKFLOWS_FILE_AGENT_CAPABILITY,
+  WORKFLOWS_FILES_CAPABILITY,
+  workflowFileResult,
+} from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   TEAM_APP_VERSION_HEADER,
@@ -58,9 +62,9 @@ import {
 } from "@openbot/contracts/team-protocol";
 import { AGENT_ACCESS_CODECS, AGENT_ACCESS_ROUTES } from "@openbot/contracts/team-protocol/agent-access-v1";
 import { teamCapabilitiesForProtocol, teamCapabilityHeaders } from "@openbot/contracts/team-protocol/current";
-import { TEAM_PROTOCOL_V10 } from "@openbot/contracts/team-protocol/v10";
 import { TEAM_PROTOCOL_V7 } from "@openbot/contracts/team-protocol/v7";
 import { TEAM_PROTOCOL_V9 } from "@openbot/contracts/team-protocol/v9";
+import { TEAM_PROTOCOL_V10 } from "@openbot/contracts/team-protocol/v10";
 import {
   WORKFLOW_NOTIFICATIONS_CAPABILITY,
   WORKFLOW_NOTIFICATIONS_ROUTE,
@@ -159,6 +163,7 @@ const STEP_DEADLINE_MS = 30_000;
 const WEBHOOK_URL = "https://relay.example.test/hooks/e2e";
 const SECRET = "whsec-e2e-not-a-real-secret";
 const LONG_ANSWER = "a".repeat(40_000);
+const FILE_ANSWER = "  Bericht für Zürich\r\n\r\n";
 
 // The main process imports Electron for its windows and IPC. No check here opens a window.
 plugin({
@@ -341,6 +346,7 @@ async function startHost(): Promise<Host> {
   if (!team.getIdentity()) await runCauseEffect(team.configure("E2E Host", OWNER.username, OWNER.password));
   const agents = new AgentService({ store: agentStore, mailbox, browser: agentBrowser, sidebarLayout: sidebar });
   const deliveries = new Map<string, string>();
+  const fileTurns = new Set<string>();
   const workflows = await Effect.runPromise(
     createWorkflows({
       inbox: { ...inbox, chat: (deliveryId, agentId) => ({ agentId, taskId: deliveryId }) },
@@ -355,11 +361,12 @@ async function startHost(): Promise<Host> {
           ? { status: "failed", turnId: null, error: "The agent step failed in the e2e." }
           : { status: "completed", turnId: `turn-${deliveryId}`, error: null };
       },
-      turnAnswer: () => LONG_ANSWER,
-      sendHandoff: ({ agentId, idempotencyKey }) =>
+      turnAnswer: (_agentId, turnId) => (fileTurns.has(turnId) ? FILE_ANSWER : LONG_ANSWER),
+      sendHandoff: ({ agentId, idempotencyKey, text }) =>
         Effect.sync(() => {
           const deliveryId = `delivery-${idempotencyKey}`;
           deliveries.set(deliveryId, agentId);
+          if (text.includes("E2E author the report.")) fileTurns.add(`turn-${deliveryId}`);
           return deliveryId;
         }),
       stopDelivery: () => Effect.void,
@@ -1544,6 +1551,49 @@ async function runChecks() {
     const unauthenticated = await call("GET", TEAM_API_ROUTES.attachment(result.id), { protocol: TEAM_PROTOCOL_V9 });
     assert.equal(unauthenticated.status, 401);
     return { run: done.status, download: file.status, unauthenticated: unauthenticated.status, name: result.name };
+  });
+
+  await step("file authoring respects agent access and returns the selected agent's bytes", async () => {
+    assert.ok(teamCapabilitiesForProtocol(TEAM_PROTOCOL_V10).includes(WORKFLOWS_FILE_AGENT_CAPABILITY));
+    assert.ok(!teamCapabilitiesForProtocol(TEAM_PROTOCOL_V9).includes(WORKFLOWS_FILE_AGENT_CAPABILITY));
+    const graph = (agentId: string): WorkflowGraph => ({
+      nodes: [
+        promptNode,
+        {
+          id: "file",
+          kind: "output",
+          at: at(300),
+          fields: { target: "file", fileSource: "agent", agentId, prompt: "E2E author the report." },
+        },
+      ],
+      edges: [{ id: "edge", from: "prompt", to: "file", type: "text" }],
+      strokes: [],
+    });
+    const hidden = await hostWorkflow("Hidden file author", graph(closed));
+    const forbidden = await call("POST", WORKFLOWS_ROUTES.get, {
+      token: member,
+      protocol: TEAM_PROTOCOL_V10,
+      body: { workflowId: hidden.id },
+    });
+    assert.equal(forbidden.status, 404);
+    const workflow = await hostWorkflow("Visible file author", graph(open));
+    const started = await ok(WORKFLOWS_ROUTES.startRun, member, {
+      workflowId: workflow.id,
+      requestId: requestId(),
+    });
+    const runId = text(record(started.run, "run").id, "run id");
+    const done = await settled(runId, "file");
+    assert.equal(done.status, "done", done.error ?? "");
+    assert.equal(done.agentId, open);
+    assert.ok(done.output);
+    const result = workflowFileResult(done.output);
+    assert.ok(result);
+    const file = await fetch(`http://127.0.0.1:${current().port}${TEAM_API_ROUTES.attachment(result.id)}`, {
+      headers: v9Headers(member),
+    });
+    assert.equal(file.status, 200);
+    assert.equal(await file.text(), FILE_ANSWER);
+    return { run: done.status, download: file.status, hidden: forbidden.status };
   });
 
   await step("notification history keeps the chat, order and access of each notice", async () => {

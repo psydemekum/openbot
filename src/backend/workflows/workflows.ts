@@ -107,7 +107,13 @@ import {
   discordTriggerMessage,
   workflowDiscordPayload,
 } from "./discord-matching";
-import { workflowFileInput, workflowFileOutput } from "./file-output";
+import {
+  readWorkflowFileAgentInput,
+  type WorkflowFileWrite,
+  workflowFileAgentInput,
+  workflowFileInput,
+  workflowFileOutput,
+} from "./file-output";
 import {
   type GitHubEventFacts,
   githubEventFacts,
@@ -282,11 +288,9 @@ export interface WorkflowsDependencies {
    */
   filePath?: (attachmentId: string) => Effect.Effect<string | null, { readonly cause: unknown }>;
   /** Keeps a text export as a host attachment. */
-  storeFile?: (input: {
-    bytes: Uint8Array;
-    name: string;
-    mimeType: string;
-  }) => Effect.Effect<{ id: string; name: string; mimeType: string; size: number }, { readonly cause: unknown }>;
+  storeFile?: (
+    input: WorkflowFileWrite,
+  ) => Effect.Effect<{ id: string; name: string; mimeType: string; size: number }, { readonly cause: unknown }>;
   /** Ends a delivery: cancels it while it waits, or interrupts the turn that answers it. */
   stopDelivery(agentId: string, deliveryId: string): Effect.Effect<void, { readonly cause: unknown }>;
   /** One tool-less generation; the failure is a message the user can read. */
@@ -554,7 +558,10 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
          * Sends an agent step's message and keeps the delivery. The key is the step's, so a second
          * attempt after a restart finds the delivery the first one made instead of sending twice.
          */
-        const sendAgentStep = Effect.fn("Workflows.sendAgentStep")(function* (step: StoredWorkflowStep) {
+        const sendAgentStep = Effect.fn("Workflows.sendAgentStep")(function* (
+          step: StoredWorkflowStep,
+          text = step.input,
+        ) {
           if (!step.agentId) {
             settle(step, { status: "failed", error: sourceText("error.workflow.agentMissing") });
             return;
@@ -594,7 +601,7 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
                 scheduledFor: run?.scheduledFor ?? run?.startedAt ?? step.createdAt,
               },
               agentId: step.agentId,
-              text: step.input,
+              text,
               sourcePaths,
               idempotencyKey: `workflow-step:${step.id}`,
             })
@@ -612,19 +619,28 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
         });
 
         /** Ends an agent step from its delivery. Answers whether the step ended. */
-        const settleFromDelivery = (step: StoredWorkflowStep): boolean => {
+        const settleFromDelivery = Effect.fn("Workflows.settleFromDelivery")(function* (step: StoredWorkflowStep) {
           if (!step.deliveryId) return false;
           // The agent was deleted while it answered.
           if (!step.agentId)
             return settle(step, { status: "failed", error: sourceText("error.workflow.agentMissing") });
           const delivery = dependencies.delivery(step.deliveryId);
           if (!delivery) return settle(step, { status: "failed", error: sourceText("error.workflow.agentStepEnded") });
-          if (delivery.turnId) runs.attachTurn(step.id, delivery.turnId, now());
+          if (step.kind === "agent" && delivery.turnId) runs.attachTurn(step.id, delivery.turnId, now());
           if (delivery.status === "completed") {
             if (delivery.error) return settle(step, { status: "failed", error: delivery.error });
             const answer = delivery.turnId ? dependencies.turnAnswer(step.agentId, delivery.turnId) : null;
             // The no-update marker is the routine wording for "nothing to say".
             const output = answer === null || isNoUpdateAnswer(answer) ? "" : answer;
+            if (step.kind === "output") {
+              if (!delivery.turnId || !output.trim())
+                return settle(step, { status: "failed", error: sourceText("error.workflow.fileAgentEmpty") });
+              // For a file step, a recorded turn means the write may have started before a restart.
+              if (step.turnId)
+                return settle(step, { status: "failed", error: sourceText("error.workflow.fileInterrupted") });
+              runs.attachTurn(step.id, delivery.turnId, now());
+              return yield* saveFile(step, readWorkflowFileAgentInput(step.input).fields, output);
+            }
             return settle(step, { status: "done", output });
           }
           if (delivery.status === "cancelled") return settle(step, { status: "stopped", error: delivery.error });
@@ -634,7 +650,7 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
               error: delivery.error ?? sourceText("error.workflow.agentStepEnded"),
             });
           return false;
-        };
+        });
 
         /** Runs a model step or a condition in a fiber of its own; the pass does not wait for it. */
         const startGeneration = (step: StoredWorkflowStep, node: WorkflowNode): Effect.Effect<void> => {
@@ -1171,11 +1187,9 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
             const run = step.runId ? runs.run(step.runId) : null;
             const graph = run?.graph ?? store.detail(step.workflowId)?.graph;
             if (graph) {
-              const source = notificationSource(
-                graph,
-                step.nodeId,
-                run ? latestSteps(run.id) : runs.latestDone(step.workflowId),
-              );
+              const source = step.deliveryId
+                ? step
+                : notificationSource(graph, step.nodeId, run ? latestSteps(run.id) : runs.latestDone(step.workflowId));
               const chat = source?.deliveryId && source.agentId ? inbox.chat(source.deliveryId, source.agentId) : null;
               yield* inbox
                 .add({
@@ -1201,10 +1215,45 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
           dependencies.notify({ kind, workflowId: step.workflowId, workflowTitle, text });
         });
 
-        const saveFile = Effect.fn("Workflows.saveFile")(function* (step: StoredWorkflowStep, node: WorkflowNode) {
+        const saveFile = Effect.fn("Workflows.saveFile")(function* (
+          step: StoredWorkflowStep,
+          fields: WorkflowNode["fields"],
+          text: string,
+        ) {
           const prepared = workflowFileOutput(
-            node.fields,
-            step.input,
+            fields,
+            text,
+            (step.startedAt ?? now().toISOString()).slice(0, 10),
+            step.runId ?? step.id,
+          );
+          if ("error" in prepared) return settle(step, { status: "failed", error: prepared.error });
+          if (!dependencies.storeFile)
+            return settle(step, { status: "failed", error: sourceText("error.workflow.fileUnavailable") });
+          const grantId = fields.folderGrantId;
+          const folder =
+            typeof grantId === "string" && grantId
+              ? { workflowId: step.workflowId, nodeId: step.nodeId, grantId }
+              : undefined;
+          const stored = yield* Effect.result(dependencies.storeFile({ ...prepared, ...(folder && { folder }) }));
+          if (stored._tag === "Failure") {
+            logger.warn("A workflow file could not be stored.", { stepId: step.id });
+            return settle(step, {
+              status: "failed",
+              error: sourceText(folder ? "error.workflow.fileFolderFailed" : "error.workflow.fileFailed"),
+            });
+          }
+          const { id, name, mimeType, size } = stored.success;
+          const file: WorkflowFileResult = { type: "workflow-file", id, name, mimeType, size };
+          const ended = settle(step, { status: "done", output: JSON.stringify(file) });
+          if (ended && fields.notify === true) yield* publishNotice(step, "output", file.name);
+          return ended;
+        }, Effect.uninterruptible);
+
+        const sendFileAgent = Effect.fn("Workflows.sendFileAgent")(function* (step: StoredWorkflowStep) {
+          const { fields, text } = readWorkflowFileAgentInput(step.input);
+          const prepared = workflowFileOutput(
+            fields,
+            text,
             (step.startedAt ?? now().toISOString()).slice(0, 10),
             step.runId ?? step.id,
           );
@@ -1212,21 +1261,16 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
             settle(step, { status: "failed", error: prepared.error });
             return;
           }
-          if (!dependencies.storeFile) {
-            settle(step, { status: "failed", error: sourceText("error.workflow.fileUnavailable") });
+          if (typeof fields.prompt !== "string" || !fields.prompt.trim()) {
+            settle(step, { status: "failed", error: sourceText("error.workflow.fileAgentPrompt") });
             return;
           }
-          const stored = yield* Effect.result(dependencies.storeFile(prepared));
-          if (stored._tag === "Failure") {
-            logger.warn("A workflow file could not be stored.", { stepId: step.id });
-            settle(step, { status: "failed", error: sourceText("error.workflow.fileFailed") });
-            return;
-          }
-          const { id, name, mimeType, size } = stored.success;
-          const file: WorkflowFileResult = { type: "workflow-file", id, name, mimeType, size };
-          settle(step, { status: "done", output: JSON.stringify(file) });
-          if (node.fields.notify === true) yield* publishNotice(step, "output", file.name);
-        }, Effect.uninterruptible);
+          const format =
+            fields.format === "html" ? "a complete HTML document" : fields.format === "md" ? "Markdown" : "plain text";
+          const task = `${fields.prompt}\n\nYour final answer is the file content in ${format}. Return only that content, without a surrounding code fence. OpenBot saves the file.`;
+          const input = text ? `${text}\n--- end input ---` : "";
+          yield* sendAgentStep(step, agentStepText(titleOf(step.workflowId), task, input));
+        });
 
         /** Does what a new running step of `node` does. */
         const execute = Effect.fn("Workflows.execute")(function* (
@@ -1266,7 +1310,10 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
               return;
             case "output":
               if (fieldText(node, "target") === "file") {
-                yield* saveFile(step, node);
+                if (step.agentId) yield* sendFileAgent(step);
+                else if (node.fields.fileSource === "agent")
+                  settle(step, { status: "failed", error: sourceText("error.workflow.agentMissing") });
+                else yield* saveFile(step, node.fields, step.input);
                 return;
               }
               if (fieldText(node, "target") === "channel") {
@@ -1306,7 +1353,10 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
          * apart from the trigger's event for a GitHub output.
          */
         const stepInput = (node: WorkflowNode, workflowId: string, inputs: readonly string[]) => {
-          if (node.kind === "output" && fieldText(node, "target") === "file") return workflowFileInput(inputs);
+          if (node.kind === "output" && fieldText(node, "target") === "file") {
+            const text = workflowFileInput(inputs);
+            return nodeAgentId(node) ? workflowFileAgentInput(node.fields, text) : text;
+          }
           if (node.kind === "output" && fieldText(node, "target") === "github") return githubOutputInput(inputs);
           const text = inputText(inputs);
           return node.kind === "agent" ? agentStepText(titleOf(workflowId), fieldText(node, "task"), text) : text;
@@ -1453,12 +1503,13 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
           for (const step of runs.openSteps()) {
             if (step.status !== "running") continue;
             let ended = false;
-            if (step.kind === "agent") {
+            if (step.kind === "agent" || (step.kind === "output" && step.agentId)) {
               // A step without a delivery lost its message to a restart between the two writes.
               if (!step.deliveryId) {
-                yield* sendAgentStep(step);
+                if (step.kind === "output") yield* sendFileAgent(step);
+                else yield* sendAgentStep(step);
                 ended = runs.step(step.id)?.status !== "running";
-              } else ended = settleFromDelivery(step);
+              } else ended = yield* settleFromDelivery(step);
             } else if (
               step.kind === "llm" ||
               step.kind === "condition" ||
@@ -2189,7 +2240,7 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
                     requestId: input.requestId,
                     agentId: nodeAgentId(node),
                     status: "running",
-                    // An agent step's input is its whole message, with the task: build it again.
+                    // An agent task gets its new message. A file export keeps its original source text.
                     input:
                       node.kind === "agent"
                         ? stepInput(
@@ -2201,7 +2252,11 @@ class Workflows extends Context.Service<Workflows, WorkflowsShape>()("openbot/ba
                               run ? latestSteps(run.id) : runs.latestDone(failed.workflowId),
                             ),
                           )
-                        : failed.input,
+                        : node.kind === "output" && (node.fields.target === "file" || failed.agentId)
+                          ? stepInput(node, failed.workflowId, [
+                              failed.agentId ? readWorkflowFileAgentInput(failed.input).text : failed.input,
+                            ])
+                          : failed.input,
                   },
                   now(),
                 ),

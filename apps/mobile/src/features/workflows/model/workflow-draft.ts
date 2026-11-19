@@ -225,8 +225,9 @@ export const useWorkflowDraft = create<DraftStore>((set, get) => {
       const source = draft?.graph.nodes.find((node) => node.id === nodeId);
       const list = draft?.outline ? outlineListOf(draft.outline, nodeId) : null;
       if (!draft?.outline || !source || !list || list === "loose" || source.kind === "condition") return null;
+      const { folderGrantId: _grant, folderName: _folder, ...fields } = source.fields;
       const copy: WorkflowNode = {
-        ...newNode(source.kind, source.fields),
+        ...newNode(source.kind, fields),
         ...(source.size ? { size: source.size } : {}),
       };
       const index = draft.outline[list].indexOf(nodeId) + 1;

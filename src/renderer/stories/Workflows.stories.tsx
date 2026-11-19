@@ -364,6 +364,8 @@ export const FileOutput: Story = {
       catalogs={{
         ...STORY_CATALOGS,
         downloadFile: async (file) => download("data:application/octet-stream,Gr%C3%BCezi%20Z%C3%BCrich", file.name),
+        fileAgent: true,
+        chooseFileFolder: async () => ({ id: "story-folder", name: "Reports" }),
       }}
       edges={[{ id: "source-file", from: "source", to: "file", type: "text" }]}
       fields={{ file: { target: "file", format: "html", filename: "report-{{date}}", notify: false } }}

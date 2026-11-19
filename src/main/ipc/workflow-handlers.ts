@@ -30,6 +30,7 @@ import {
   WORKFLOWS_SUNRA_ROUTES,
 } from "@openbot/contracts/team-protocol/workflows-sunra-v1";
 import { WORKFLOWS_CAPABILITY, WORKFLOWS_ROUTES } from "@openbot/contracts/team-protocol/workflows-v1";
+import type { AppTranslate } from "@openbot/i18n";
 import { sourceText } from "@openbot/i18n/source";
 import {
   decodeRemoteHiggsfieldCredits,
@@ -55,7 +56,9 @@ import {
   decodeRemoteWorkflowVersions,
 } from "@openbot/team-client/workflow-decoding";
 import type { Effect } from "effect";
+import { app, type BrowserWindow, dialog, type OpenDialogOptions } from "electron";
 import { runCauseEffect } from "../../backend/effect-boundary";
+import { grantWorkflowExportFolder } from "../../backend/workflows/file-storage";
 import type { WorkflowsHandle } from "../../backend/workflows/workflows";
 import type { WorkflowGitHubDirectory } from "../github-rest";
 import type { HostEventsService } from "../host-events-service";
@@ -110,6 +113,8 @@ interface WorkflowIpcDependencies {
   /** This computer's GitHub repositories, labels and people for the editor. The user is the owner. */
   github: WorkflowGitHubDirectory;
   remoteServers: WorkflowRemoteServers;
+  getMainWindow: () => BrowserWindow | null;
+  translate: AppTranslate;
 }
 
 export function workflowIpcHandlers({
@@ -117,6 +122,8 @@ export function workflowIpcHandlers({
   events,
   github,
   remoteServers,
+  getMainWindow,
+  translate,
 }: WorkflowIpcDependencies): Pick<IpcGroupHandlers, "workflows"> {
   function remote<T>(serverId: string, path: string, decoder: ResponseDecoder<T>, body: unknown): Promise<T> {
     if (!remoteServers.supportsCapability(serverId, WORKFLOWS_CAPABILITY))
@@ -131,6 +138,28 @@ export function workflowIpcHandlers({
   }
   return {
     workflows: {
+      chooseFileFolder: scopedHandler(parseWorkflowTrigger, {
+        local: async (node) => {
+          await runCauseEffect(workflows.get(node.workflowId));
+          const parent = getMainWindow();
+          const options: OpenDialogOptions = {
+            title: translate("workflow.output.chooseFolder"),
+            properties: ["openDirectory", "createDirectory"],
+          };
+          const result = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options));
+          const path = result.canceled ? undefined : result.filePaths[0];
+          if (!path) return null;
+          try {
+            return await grantWorkflowExportFolder(app.getPath("userData"), node, path);
+          } catch {
+            throw new Error(sourceText("error.workflow.fileFolderFailed"));
+          }
+        },
+        // This dialog grants the host access to a folder on its own computer.
+        remote: () => {
+          throw new Error(sourceText("error.workflow.fileFolderLocal"));
+        },
+      }),
       notifications: scopedQueryHandler({
         local: async () => {
           const known = new Set((await runCauseEffect(workflows.list())).map((workflow) => workflow.id));

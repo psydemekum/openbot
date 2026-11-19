@@ -8,6 +8,12 @@ export const messages = {
   "error.workflow.fileName":
     "Verwende einen Dateinamen ohne Ordner oder Sonderzeichen und nur die Platzhalter für Datum und Durchlauf.",
   "error.workflow.fileUnavailable": "Dieser Host kann keine Workflow-Dateien speichern.",
+  "error.workflow.fileFolderFailed":
+    "Die Workflow-Datei konnte nicht im gewählten Ordner gespeichert werden. Prüfe den Ordner oder wähle ihn erneut aus.",
+  "error.workflow.fileAgentPrompt": "Gib einen Prompt für den Agenten ein, der die Datei erstellt.",
+  "error.workflow.fileAgentEmpty": "Der Agent hat keinen Dateiinhalt zurückgegeben.",
+  "error.workflow.fileFolderLocal":
+    "Wähle den Exportordner in der Desktop-App auf dem Computer, auf dem der Workflow läuft.",
   "error.workflow.fileFailed":
     "Die Workflow-Datei konnte nicht gespeichert werden. Prüfe den freien Speicher und versuche es erneut.",
   "error.workflow.fileInterrupted":

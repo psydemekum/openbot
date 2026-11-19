@@ -156,6 +156,14 @@ export function WorkflowsCanvas(props: {
     get downloadFile() {
       return props.host.filesSupported() ? props.host.downloadFile : undefined;
     },
+    get fileAgent() {
+      return props.host.fileAgentSupported();
+    },
+    get chooseFileFolder() {
+      const choose = props.host.chooseFileFolder;
+      const workflowId = workflows.detail()?.summary.id;
+      return choose && workflowId ? (nodeId: string) => choose({ workflowId, nodeId }) : undefined;
+    },
     // The Library pictures that an asset step can use. A picture with no preview address, as the
     // browser gets, reads its file only when the canvas shows it.
     get files() {

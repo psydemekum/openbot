@@ -370,6 +370,7 @@ import {
 import { decodeVaultCodes, decodeVaultImportResult, decodeVaultSecret, decodeVaultState } from "./vault-decoding";
 import {
   decodeWorkflowDetail,
+  decodeWorkflowFileFolder,
   decodeWorkflowGitHubCatalog,
   decodeWorkflowGitHubHistory,
   decodeWorkflowGitHubOptions,
@@ -924,6 +925,7 @@ const openbotApi: OpenBotDesktopApi = {
     stopRun: decodeVoid,
   }),
   workflows: bridgeGroup(IPC_ENDPOINTS.workflows, {
+    chooseFileFolder: decodeWorkflowFileFolder,
     list: decodeWorkflowSummaries,
     get: decodeWorkflowDetail,
     create: decodeWorkflowDetail,

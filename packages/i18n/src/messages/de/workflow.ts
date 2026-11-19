@@ -9,6 +9,13 @@ export const messages = {
   "workflow.output.formatHtml": "HTML (.html)",
   "workflow.output.format": "Format",
   "workflow.output.filename": "Dateiname",
+  "workflow.output.fileLocation": "Speicherort",
+  "workflow.output.fileLibrary": "OpenBot-Bibliothek",
+  "workflow.output.chooseFolder": "Ordner auswählen …",
+  "workflow.output.fileContent": "Dateiinhalt",
+  "workflow.output.fileFromInput": "Workflow-Eingabe",
+  "workflow.output.fileFromAgent": "Agent schreibt",
+  "workflow.output.filePrompt": "Prompt für den Dateiinhalt",
   "workflow.output.filenameHint":
     "{date} setzt das UTC-Datum ein, {run} den Durchlauf. Jeder Durchlauf behält eine eigene Datei in der Bibliothek.",
   "workflow.output.alsoNotify": "Nach dem Speichern benachrichtigen",

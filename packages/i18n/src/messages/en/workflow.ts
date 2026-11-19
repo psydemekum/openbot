@@ -8,6 +8,13 @@ export const messages = defineMessages("workflow", {
   "workflow.output.formatHtml": "HTML (.html)",
   "workflow.output.format": "Format",
   "workflow.output.filename": "File name",
+  "workflow.output.fileLocation": "Save to",
+  "workflow.output.fileLibrary": "OpenBot Library",
+  "workflow.output.chooseFolder": "Choose folder…",
+  "workflow.output.fileContent": "File content",
+  "workflow.output.fileFromInput": "Workflow input",
+  "workflow.output.fileFromAgent": "Agent writes",
+  "workflow.output.filePrompt": "Prompt for the file",
   "workflow.output.filenameHint":
     "Use {date} for the UTC date and {run} for the run. Each run keeps its own file in the Library.",
   "workflow.output.alsoNotify": "Notify when saved",

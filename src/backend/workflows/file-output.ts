@@ -34,7 +34,7 @@ export function workflowFileOutput(fields: WorkflowFields, input: string, date: 
     /[<>:"/\\|?*\p{Cc}{}]/u.test(expanded) ||
     expanded.startsWith(".") ||
     /[. ]$/.test(expanded) ||
-    /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(expanded)
+    /^(con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(expanded)
   )
     return { error: sourceText("error.workflow.fileName") };
   const name = `${expanded.replace(/\.(txt|md|html)$/i, "")}.${format}`;
@@ -44,4 +44,20 @@ export function workflowFileOutput(fields: WorkflowFields, input: string, date: 
     text = `<!doctype html>\n<html><head><meta charset="utf-8"><title>Workflow</title></head><body><pre>${escaped}</pre></body></html>\n`;
   }
   return { name, mimeType: WORKFLOW_FILE_MIME[format], bytes: new TextEncoder().encode(text) };
+}
+
+/** Agent output settings travel with the step so retries and a restart use the same request. */
+export function workflowFileAgentInput(fields: WorkflowFields, text: string): string {
+  return JSON.stringify({ fields, text });
+}
+
+export function readWorkflowFileAgentInput(input: string): { fields: WorkflowFields; text: string } {
+  return JSON.parse(input);
+}
+
+export interface WorkflowFileWrite {
+  bytes: Uint8Array;
+  name: string;
+  mimeType: string;
+  folder?: { workflowId: string; nodeId: string; grantId: string };
 }

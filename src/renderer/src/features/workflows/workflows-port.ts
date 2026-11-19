@@ -8,7 +8,9 @@ import {
   type StorageUsage,
   type StoredFileRow,
   WORKFLOW_PICTURE_TYPES,
+  WORKFLOWS_FILE_AGENT_CAPABILITY,
   WORKFLOWS_FILES_CAPABILITY,
+  type WorkflowFileFolder,
   type WorkflowFileResult,
   type WorkflowMediaKind,
 } from "@openbot/contracts/ipc";
@@ -35,7 +37,7 @@ type WorkflowsApi = OpenBotDesktopApi["workflows"];
 type NoInputMethod = "list" | "notifications" | "githubCatalog" | "mediaProviders" | "mediaCredits" | "mediaCatalog";
 /** Each method with its input only; the methods of `NoInputMethod` take none. */
 type BoundWorkflowsApi = {
-  [Name in Exclude<keyof WorkflowsApi, NoInputMethod>]: (
+  [Name in Exclude<keyof WorkflowsApi, NoInputMethod | "chooseFileFolder">]: (
     input: Parameters<WorkflowsApi[Name]>[0],
   ) => ReturnType<WorkflowsApi[Name]>;
 } & { [Name in NoInputMethod]: () => ReturnType<WorkflowsApi[Name]> };
@@ -108,6 +110,10 @@ export interface WorkflowHost {
    */
   mediaSizeSupported(): boolean;
   filesSupported(): boolean;
+  fileAgentSupported(): boolean;
+  chooseFileFolder?:
+    | ((input: { workflowId: string; nodeId: string }) => Promise<WorkflowFileFolder | null>)
+    | undefined;
   downloadFile(file: WorkflowFileResult): Promise<void>;
   /**
    * The pictures of the host's Library that an asset step can use: this computer's, or a joined
@@ -355,6 +361,12 @@ export function desktopWorkflowHost(serverId: string, server: () => ServerSummar
     mediaTransparentSupported,
     mediaSizeSupported,
     filesSupported: () => local() || serverSupportsCapability(server(), WORKFLOWS_FILES_CAPABILITY),
+    fileAgentSupported: () => local() || serverSupportsCapability(server(), WORKFLOWS_FILE_AGENT_CAPABILITY),
+    get chooseFileFolder() {
+      return local()
+        ? (input: { workflowId: string; nodeId: string }) => api().chooseFileFolder(input, serverId)
+        : undefined;
+    },
     downloadFile: async (file) => {
       await window.openbot.storage.openFile({ fileId: file.id, action: "save" }, serverId);
     },

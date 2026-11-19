@@ -1,6 +1,6 @@
 import { isDynamicRecord } from "./runtime-values";
 
-export { WORKFLOWS_FILES_CAPABILITY } from "./team-protocol/workflows-files-v1";
+export { WORKFLOWS_FILE_AGENT_CAPABILITY, WORKFLOWS_FILES_CAPABILITY } from "./team-protocol/workflows-files-v1";
 export const WORKFLOW_FILE_FORMATS = ["txt", "md", "html"] as const;
 export type WorkflowFileFormat = (typeof WORKFLOW_FILE_FORMATS)[number];
 export const WORKFLOW_FILE_MIME = {

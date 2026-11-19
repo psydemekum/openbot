@@ -6,6 +6,10 @@ export const messages = {
   "mobile.workflow.inbox.empty": "Noch keine Workflow-Benachrichtigungen.",
   "mobile.workflow.file.format": "Format",
   "mobile.workflow.file.filename": "Dateiname",
+  "mobile.workflow.file.location": "Speicherort",
+  "mobile.workflow.file.library": "OpenBot-Bibliothek",
+  "mobile.workflow.file.author": "Vom Agenten erstellen lassen",
+  "mobile.workflow.file.prompt": "Prompt für den Dateiinhalt",
   "mobile.workflow.file.notify": "Nach dem Speichern benachrichtigen",
   "mobile.workflow.file.hint":
     "{date} setzt das UTC-Datum ein, {run} den Durchlauf. Jeder Durchlauf behält eine eigene Datei in der Bibliothek.",

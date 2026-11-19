@@ -48,7 +48,7 @@ function agentOptions(catalogs: WorkflowCatalogs): PickerOption<string>[] {
  * The agent of a step. A step with no agent asks for one. An agent that the user deleted shows a
  * warning and opens the same list.
  */
-function AgentPill(props: {
+export function AgentPill(props: {
   agent: AgentProfile | undefined;
   /** True when the step names an agent that is not in the catalog. */
   removed: boolean;

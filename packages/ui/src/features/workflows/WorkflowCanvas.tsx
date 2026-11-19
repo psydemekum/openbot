@@ -1664,7 +1664,11 @@ export function WorkflowCanvas(props: WorkflowCanvasProps) {
     setSizes((draft) => {
       for (const [id, size] of Object.entries(clip.sizes)) draft[ids.get(id) ?? id] = { ...size };
     });
-    for (const [id, fields] of Object.entries(clip.fields)) canvas.putFields(ids.get(id) ?? id, fields);
+    for (const [id, fields] of Object.entries(clip.fields)) {
+      // A folder chosen in the native dialog belongs only to the original node.
+      const { folderGrantId: _grant, folderName: _folder, ...copiedFields } = fields;
+      canvas.putFields(ids.get(id) ?? id, copiedFields);
+    }
     setNodes((list) => [...list, ...copies]);
     canvas.addEdges(
       clip.edges.flatMap((edge) => {

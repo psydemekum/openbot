@@ -183,15 +183,16 @@ import {
   WHATSAPP_CONNECTOR_CAPABILITY,
   WHATSAPP_STATUS_REACTIONS_CAPABILITY,
   WHATSAPP_WORKING_MESSAGE_CAPABILITY,
+  WORKFLOW_NOTIFICATIONS_CAPABILITY,
   WORKFLOWS_CAPABILITY,
   WORKFLOWS_CHANNELS_CAPABILITY,
   WORKFLOWS_CHATS_CAPABILITY,
+  WORKFLOWS_FILE_AGENT_CAPABILITY,
+  WORKFLOWS_FILES_CAPABILITY,
   WORKFLOWS_GITHUB_CAPABILITY,
   WORKFLOWS_HIGGSFIELD_CAPABILITY,
   WORKFLOWS_MEDIA_CAPABILITY,
   WORKFLOWS_MEDIA_CATALOG_CAPABILITY,
-  WORKFLOW_NOTIFICATIONS_CAPABILITY,
-  WORKFLOWS_FILES_CAPABILITY,
   WORKFLOWS_SUNRA_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
 import { CUSTOM_AGENTS_CAPABILITY } from "@openbot/contracts/team-protocol/custom-agents-v1";
@@ -2935,7 +2936,11 @@ export class TeamApiServer {
         if (capability === ROUTINE_FLOWS_CAPABILITY) return this.#options.routineFlows !== undefined;
         if (capability === ROUTINE_FLOW_STOP_CAPABILITY) return this.#options.routineFlows !== undefined;
         if (capability === WORKFLOWS_CAPABILITY) return this.#options.workflows !== undefined;
-        if (capability === WORKFLOW_NOTIFICATIONS_CAPABILITY || capability === WORKFLOWS_FILES_CAPABILITY)
+        if (
+          capability === WORKFLOW_NOTIFICATIONS_CAPABILITY ||
+          capability === WORKFLOWS_FILES_CAPABILITY ||
+          capability === WORKFLOWS_FILE_AGENT_CAPABILITY
+        )
           return this.#options.workflows !== undefined;
         if (capability === CRM_CAPABILITY) return this.#options.crm !== undefined;
         if (capability === WORKFLOWS_GITHUB_CAPABILITY) return this.#options.workflows?.github !== undefined;

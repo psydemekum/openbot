@@ -431,7 +431,13 @@ export function WorkflowStepScreen() {
       {node.kind === "output" ? (
         <>
           <OutputChoice node={node} draft={draft} />
-          {text(node, "target") === "file" ? <FileOutputFields node={node} draft={draft} /> : null}
+          {text(node, "target") === "file" ? (
+            <FileOutputFields
+              node={node}
+              draft={draft}
+              agentChoice={<AgentChoice node={node} agents={serverAgents} />}
+            />
+          ) : null}
           {text(node, "target") === "github" ? <GitHubOutputFields node={node} draft={draft} /> : null}
           {text(node, "target") === "discord" ? <DiscordOutputFields node={node} /> : null}
           {text(node, "target") === "telegram" ? <TelegramOutputFields node={node} draft={draft} /> : null}

@@ -18,8 +18,10 @@ import {
   isWorkflowSummary,
   isWorkflowVersion,
   isWorkflowWebhookSecret,
+  type WorkflowFileFolder,
 } from "@openbot/contracts/ipc";
 import { guardedDecoder, guardedListDecoder } from "@openbot/contracts/ipc-decoding";
+import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 
 export const decodeWorkflowSummaries = guardedListDecoder(isWorkflowSummary, "workflow list response");
 export const decodeWorkflowSummary = guardedDecoder(isWorkflowSummary, "workflow summary response");
@@ -52,4 +54,11 @@ export const decodeWorkflowMediaProviders = guardedDecoder(
 export function decodeWorkflowPictureId(value: unknown): string {
   if (typeof value !== "string" || !value) throw new Error("Invalid workflow picture response.");
   return value;
+}
+
+export function decodeWorkflowFileFolder(value: unknown): WorkflowFileFolder | null {
+  if (value === null) return null;
+  if (!isDynamicRecord(value) || typeof value.id !== "string" || typeof value.name !== "string")
+    throw new Error("Invalid workflow export folder response.");
+  return { id: value.id, name: value.name };
 }

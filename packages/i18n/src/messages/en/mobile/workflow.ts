@@ -5,6 +5,10 @@ export const messages = defineMessages("mobile.workflow", {
   "mobile.workflow.inbox.empty": "No workflow notifications yet.",
   "mobile.workflow.file.format": "Format",
   "mobile.workflow.file.filename": "File name",
+  "mobile.workflow.file.location": "Save to",
+  "mobile.workflow.file.library": "OpenBot Library",
+  "mobile.workflow.file.author": "Write with an agent",
+  "mobile.workflow.file.prompt": "Prompt for the file",
   "mobile.workflow.file.notify": "Notify when saved",
   "mobile.workflow.file.hint":
     "Use {date} for the UTC date and {run} for the run. Each run keeps its own file in the Library.",

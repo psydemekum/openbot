@@ -368,6 +368,7 @@ export function mockWorkflows(
   };
 
   return {
+    chooseFileFolder: async () => ({ id: "preview-workflow-folder", name: "Reports" }),
     list: async () =>
       structuredClone([...records.values()].map((entry) => entry.detail.summary)).sort((left, right) =>
         right.updatedAt.localeCompare(left.updatedAt),
