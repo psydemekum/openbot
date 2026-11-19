@@ -12,6 +12,7 @@ import type {
   TestRoutineInput,
   WithdrawFeedbackResult,
 } from "@openbot/contracts/ipc";
+import type { MemdoorTeamSettings, SaveMemdoorTeamSettings } from "@openbot/contracts/ipc-memdoor";
 import type { AttachmentMediaSource } from "@openbot/ui/features/conversation/AttachmentCards";
 import type { AgentSkillCalls, SkillCatalogCalls } from "../../skills-port";
 import type { AgentTemplatePublishCalls } from "../agent-templates/agent-templates-port";
@@ -136,6 +137,12 @@ export interface ConversationRuntime {
         sharedTables: SharedTableCalls;
         agentTemplates: AgentTemplatePublishCalls;
         eventRoutines?: EventRoutinesApi | undefined;
+        memdoorTeam?:
+          | {
+              read(agentId: string): Promise<MemdoorTeamSettings>;
+              save(input: SaveMemdoorTeamSettings): Promise<MemdoorTeamSettings>;
+            }
+          | undefined;
         sessionSettings?:
           | {
               read(agentId: string): Promise<AgentSessionSettings>;

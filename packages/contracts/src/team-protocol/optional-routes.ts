@@ -94,6 +94,7 @@ import { MACHINE_RESOURCES_CODECS } from "./machine-resources-v1";
 import { MCP_ACCESS_CODECS } from "./mcp-access-v1";
 import { MCP_SIGN_IN_APP_CODECS } from "./mcp-sign-in-app-v1";
 import { MCP_SIGN_IN_CODECS } from "./mcp-sign-in-v1";
+import { MEMDOOR_TEAM_CODECS } from "./memdoor-team-v1";
 import { MEMORY_REVIEW_CODECS } from "./memory-review-v1";
 import { MESSAGE_DELETE_CODECS } from "./message-delete-v1";
 import { MESSAGE_PINS_CODECS } from "./message-pins-v1";
@@ -226,6 +227,7 @@ const CODECS: ReadonlyMap<string, OptionalRouteCodec> = new Map([
   ...HOSTED_SITES_CODECS,
   ...WORKSPACE_DIRECTORY_CODECS,
   ...AGENT_HOST_SETTINGS_CODECS,
+  ...MEMDOOR_TEAM_CODECS,
   ...AGENT_BACKUP_MODELS_CODECS,
   ...AGENT_TASK_LIMIT_CODECS,
   ...AGENT_NEW_CHAT_CODECS,

@@ -2,6 +2,8 @@ import type { PartialTranslation } from "../../../message";
 import type { messages as source } from "../../en/error/agent";
 
 export const messages = {
+  "error.agent.memdoorFixedRuntime":
+    "Der integrierte Multi-Agent verwendet die Modelle aus den Memdoor-Team-Einstellungen.",
   "error.agent.historyUnavailable":
     "Der Verlauf ist für diese Anfrage nicht verfügbar. Lies den aktuellen Verlauf erneut oder verwende channel_history für Arbeit in Kanälen.",
   "error.agent.historyArgumentsInvalid":

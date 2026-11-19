@@ -97,6 +97,7 @@ import {
   type ServerSummary,
   type Untyped,
 } from "@openbot/contracts/ipc";
+import { guardedDecoder } from "@openbot/contracts/ipc-decoding";
 import {
   decodeEventActivity,
   decodeEventRoutineRuns,
@@ -106,6 +107,7 @@ import {
   decodeWebhookSecret,
   decodeWebhookTestResult,
 } from "@openbot/contracts/ipc-events";
+import { isMemdoorTeamSettings } from "@openbot/contracts/ipc-memdoor";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import {
   decodeAccountUsageFromMain,
@@ -1457,6 +1459,8 @@ const openbotApi: OpenBotDesktopApi = {
     ...bridgeGroup(IPC_ENDPOINTS.agentAdmin, {
       getAgentAdminSettings: decodeAgentAdminSettings,
       getAgentHostSettings: decodeAgentHostSettingsFromMain,
+      getMemdoorTeamSettings: guardedDecoder(isMemdoorTeamSettings, "Memdoor team settings"),
+      saveMemdoorTeamSettings: guardedDecoder(isMemdoorTeamSettings, "Memdoor team settings"),
       updateAgentHostSettings: decodeAgentHostSettingsFromMain,
       getAgentBackupModels: decodeAgentBackupModelSettings,
       updateAgentBackupModels: decodeAgentBackupModelSettings,

@@ -2,6 +2,7 @@ import { LOCAL_SERVER_ID, type ServerSummary } from "@openbot/contracts/ipc";
 import { AGENT_MEMORY_LIMIT_CAPABILITY } from "@openbot/contracts/team-protocol/agent-memory-limit-v1";
 import { AGENT_NOTIFICATION_LEVELS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-notification-levels-v1";
 import { BROWSER_PROFILES_CAPABILITY } from "@openbot/contracts/team-protocol/browser-profiles-v1";
+import { MEMDOOR_TEAM_CAPABILITY } from "@openbot/contracts/team-protocol/memdoor-team-v1";
 import { ROUTINE_RUN_COMMAND_CAPABILITY } from "@openbot/contracts/team-protocol/routine-run-command-v1";
 import { classifyFailure } from "@openbot/telemetry";
 import { PanelResizer } from "@openbot/ui/components/PanelResizer";
@@ -776,6 +777,7 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
               folders={folderCalls()}
               instructionsFile={instructionsCalls()}
               sessionSettingsEditable={serverCanAdminister(props.server, "agent-session-settings-v1")}
+              memdoorTeamEditable={serverCanAdminister(props.server, MEMDOOR_TEAM_CAPABILITY)}
               adminCalls={props.runtime?.admin}
               skillCatalog={props.runtime?.skillCatalog}
               skillsMarketplaceOpen={props.skillsMarketplaceOpen}

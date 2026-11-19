@@ -1,6 +1,7 @@
 import { defineMessages } from "../../../message";
 
 export const messages = defineMessages("error.agent", {
+  "error.agent.memdoorFixedRuntime": "The built-in Multi-Agent uses the models in Memdoor team settings.",
   "error.agent.historyUnavailable":
     "History is unavailable for this request. Read recent history again, or use channel_history for channel work.",
   "error.agent.historyArgumentsInvalid":

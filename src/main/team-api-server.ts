@@ -126,6 +126,7 @@ import {
   MCP_SERVERS_CAPABILITY,
   MCP_SIGN_IN_APP_CAPABILITY,
   MCP_SIGN_IN_CAPABILITY,
+  MEMDOOR_TEAM_CAPABILITY,
   MEMORY_REVIEW_CAPABILITY,
   MODEL_VISIBILITY_CAPABILITY,
   ONEPASSWORD_CONNECTOR_CAPABILITY,
@@ -336,6 +337,7 @@ import {
   routeAgentPlanCard,
   routeAgentSpeed,
   routeAgentTaskLimit,
+  routeMemdoorTeam,
   routeModelSteering,
 } from "./team-api/route-agent-admin";
 import { agentColorsOf, routeAgentColors, visibleAgentColors } from "./team-api/route-agent-colors";
@@ -1269,6 +1271,7 @@ export class TeamApiServer {
       if ((await routeHostedSites(context, this.#options.hostedSites)) === "handled") return;
       if ((await routeAgentAdmin(context, this.#options.admin, hidden)) === "handled") return;
       if ((await routeAgentHostSettings(context, this.#options.admin, hidden)) === "handled") return;
+      if ((await routeMemdoorTeam(context, this.#options.admin, hidden)) === "handled") return;
       if ((await routeAgentBackupModels(context, this.#options.admin, hidden)) === "handled") return;
       if ((await routeAgentTaskLimit(context, this.#options.admin, hidden)) === "handled") return;
       if ((await routeAgentNewChat(context, this.#options.admin, hidden)) === "handled") return;
@@ -2843,6 +2846,7 @@ export class TeamApiServer {
         if (capability === AGENT_THREAD_BRANCHES_CAPABILITY) return this.#options.agentTasks !== undefined;
         if (capability === AGENT_THREAD_PAGES_CAPABILITY) return this.#options.agentTasks !== undefined;
         if (capability === AGENT_HOST_SETTINGS_CAPABILITY) return this.#options.admin?.agentHost !== undefined;
+        if (capability === MEMDOOR_TEAM_CAPABILITY) return this.#options.admin?.memdoorTeam !== undefined;
         if (capability === AGENT_BACKUP_MODELS_CAPABILITY) return this.#options.admin?.agentHost !== undefined;
         if (capability === AGENT_TASK_LIMIT_CAPABILITY) return this.#options.admin?.agentHost !== undefined;
         if (capability === AGENT_NEW_CHAT_CAPABILITY) return this.#options.admin?.agentHost !== undefined;

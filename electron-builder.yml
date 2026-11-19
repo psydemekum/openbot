@@ -167,6 +167,8 @@ win:
       to: remote-desktop-runtime
     - from: build/cua-driver/win32/x64
       to: cua-driver/win32/x64
+    - from: build/memdoor
+      to: memdoor
   target:
     - target: nsis
       arch:

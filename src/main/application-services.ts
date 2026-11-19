@@ -365,6 +365,7 @@ import {
 } from "./mcp-oauth-redirect-server";
 import { McpOAuthStore } from "./mcp-oauth-store";
 import { MCP_SERVER_OWNERS_FILE, McpServerOwnersStore } from "./mcp-server-owners-store";
+import { createMemdoorTeam, type MemdoorTeam } from "./memdoor-team";
 import { MemoryReviewPreferenceStore } from "./memory-review-preference-store";
 import { MessagingCredentialStore } from "./messaging-credential-store";
 import { ModelReleaseCatalog, ModelVisibility } from "./model-visibility";
@@ -722,6 +723,7 @@ export interface ApplicationServices {
   routineResults: RoutineResultsHandle;
   providerRuntimes: ProviderRuntimeManager;
   providerCredentials: ProviderCredentialStore;
+  memdoorTeam: Pick<MemdoorTeam, "read" | "save">;
   /** The Slack and Telegram connections of the agents on this host. */
   messaging: MessagingService;
   /** The WebRTC peers of this host and of its joined servers. */
@@ -1890,6 +1892,28 @@ export async function createApplicationServices({
       Effect.asVoid,
     ),
   );
+  const memdoorTeam = createMemdoorTeam({
+    executable: join(
+      app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build"),
+      "memdoor",
+      process.platform === "win32" ? "memdoor.exe" : "memdoor",
+    ),
+    profile: app.getPath("userData"),
+    credentials: providerCredentials,
+    openAIEnvironment: () => providerEnvironmentSetting.resolve("codex"),
+  });
+  await Effect.runPromise(
+    memdoorTeam
+      .load()
+      .pipe(Effect.catch(() => Effect.sync(() => logger.warn("Could not load the managed Memdoor team settings.")))),
+  );
+  if (memdoorTeam.read().runtime !== "missing") {
+    await Effect.runPromise(
+      store
+        .ensureMemdoorAgent()
+        .pipe(Effect.catch(() => Effect.sync(() => logger.warn("Could not provision the managed Memdoor agent.")))),
+    );
+  }
   /*
    * The MCP sign-ins, in their own file with the same cipher. `mcp-remote` used to keep these where
    * OpenBot could not redact them; here they are covered by the same rule as every other secret.
@@ -2459,7 +2483,10 @@ export async function createApplicationServices({
       // spawned provider process. The IPC handlers are given `list()`.
       customProviders: () => customProviders.configs(),
       // The same rule: `configs()`, with the environment values, goes to the agent process only.
-      customAgents: () => customAgents.configs(),
+      customAgents: () =>
+        memdoorTeam.read().runtime === "missing"
+          ? customAgents.configs()
+          : [...customAgents.configs().filter((config) => config.id !== "memdoor-team"), memdoorTeam.config()],
       // The enabled MCP servers, read at each spawn. The service owns the store, so this reads back
       // into the object being constructed; nothing calls it before the constructor returns.
       mcpServers: () => service.enabledMcpServers(),
@@ -3235,6 +3262,19 @@ export async function createApplicationServices({
   );
   const agentAdminSettings = createAgentAdminSettings({ agents: service, approvalAutomation });
   const agentHostSettings = createAgentHostSettings({ agents: service, busyMessageMode, agentDefaults });
+  const memdoorTeamSettings: Pick<MemdoorTeam, "read" | "save"> = {
+    read: memdoorTeam.read,
+    save: (input) =>
+      memdoorTeam
+        .save(input)
+        .pipe(
+          Effect.tap(() =>
+            service
+              .reloadCustomAgents()
+              .pipe(Effect.catch(() => Effect.sync(() => logger.warn("The Memdoor runtime could not reload.")))),
+          ),
+        ),
+  };
   const agentDefaultsSettings = createAgentDefaultsSettings({ agents: service, agentDefaults, busyMessageMode });
   const agentFolders = createAgentFolders({ service, userDataPath: app.getPath("userData") });
   const agentInstructions = createAgentInstructionsFiles(service);
@@ -3684,6 +3724,7 @@ export async function createApplicationServices({
     admin: {
       agents: agentAdminSettings,
       agentHost: agentHostSettings,
+      memdoorTeam: memdoorTeamSettings,
       agentDefaults: agentDefaultsSettings,
       folders: agentFolders,
       instructions: agentInstructions,
@@ -4820,6 +4861,7 @@ export async function createApplicationServices({
     routineResults: routineResultRuntime,
     providerRuntimes,
     providerCredentials,
+    memdoorTeam: memdoorTeamSettings,
     messaging,
     teamWebRtcBridge,
     mcpOAuth,

@@ -1,6 +1,13 @@
 import { type AgentFolderList, type BrowserProfileSummary, nextBrowserProfileHue } from "@openbot/contracts/ipc";
+import {
+  MEMDOOR_AGENT_ID,
+  MEMDOOR_DECISION_MODEL,
+  MEMDOOR_TEAM_MODEL,
+  type MemdoorTeamSettings,
+} from "@openbot/contracts/ipc-memdoor";
 import type { AgentFolderCalls } from "@openbot/ui/features/conversation/AgentFolders";
 import AgentSettingsPanel from "@openbot/ui/features/conversation/AgentSettingsPanel";
+import { MemdoorTeamSettings as MemdoorTeamForm } from "@openbot/ui/features/conversation/MemdoorTeamSettings";
 import { createStore } from "solid-js";
 import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
@@ -168,5 +175,45 @@ export const SaveFailure: Story = {
     onUpdateAgent: fn(async () => {
       throw new Error("Could not save agent settings. Try again.");
     }),
+  },
+};
+
+export const MemdoorTeam: Story = {
+  args: {
+    agent: { ...STORY_AGENT, id: MEMDOOR_AGENT_ID, name: "Multi-Agent" },
+    width: 390,
+  },
+  render: (args) => {
+    let settings: MemdoorTeamSettings = {
+      teamModel: MEMDOOR_TEAM_MODEL,
+      decisionModel: MEMDOOR_DECISION_MODEL,
+      roles: {},
+      hasApiKey: false,
+      runtime: "ready",
+    };
+    return (
+      <main class="agent-memories-story-stage">
+        <AgentSettingsPanel
+          {...args}
+          links={
+            <MemdoorTeamForm
+              agentId={MEMDOOR_AGENT_ID}
+              read={async () => settings}
+              save={async ({ teamModel, decisionModel, roles, apiKey }) => {
+                settings = {
+                  ...settings,
+                  teamModel,
+                  decisionModel,
+                  roles,
+                  hasApiKey: Boolean(apiKey) || settings.hasApiKey,
+                };
+                return settings;
+              }}
+              allowApiKey
+            />
+          }
+        />
+      </main>
+    );
   },
 };

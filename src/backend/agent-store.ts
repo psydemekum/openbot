@@ -68,6 +68,7 @@ import {
   type SidebarLayoutSnapshot,
   type UpdateAgentInput,
 } from "@openbot/contracts/ipc";
+import { MEMDOOR_AGENT_ID, MEMDOOR_RUNTIME_ID } from "@openbot/contracts/ipc-memdoor";
 import { type DynamicRecord, isBoolean, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { isGeneratedAgentId, isUuidV4, legacyAgentId } from "@openbot/contracts/validation";
 import { sourceText } from "@openbot/i18n/source";
@@ -369,10 +370,29 @@ export class AgentStore {
     return this.#creationQueue.withPermit(this.#createAgent(input, profileOperationId));
   }
 
+  ensureMemdoorAgent() {
+    return this.#creationQueue.withPermit(
+      Effect.gen({ self: this }, function* () {
+        if (this.#state.agents.some((agent) => agent.id === MEMDOOR_AGENT_ID)) return;
+        yield* this.#createAgent(
+          {
+            name: "Multi-Agent",
+            description: "",
+            avatarSeed: MEMDOOR_AGENT_ID,
+            avatarHue: null,
+          },
+          undefined,
+          true,
+        );
+      }),
+    );
+  }
+
   #createAgent = Effect.fn("AgentStore.createAgent")(function* (
     this: AgentStore,
     input: Omit<CreateAgentInput, "initialMessage">,
     profileOperationId?: string,
+    managedMemdoor = false,
   ): Effect.fn.Return<AgentSummary, StoredStateFailure> {
     try {
       if (this.#state.agents.length >= INPUT_LIMITS.agents) {
@@ -383,7 +403,13 @@ export class AgentStore {
       if (!isAvatarSeed(input.avatarSeed)) throw new Error("Invalid avatar seed.");
       if (input.avatarHue !== null && !isAvatarHue(input.avatarHue)) throw new Error("Invalid avatar hue.");
       if (input.avatarColor != null && !isAvatarColor(input.avatarColor)) throw new Error("Invalid avatar color.");
-      const record = this.#createRecord(`agent-${randomUUID()}`, name, "", description);
+      const id = managedMemdoor ? MEMDOOR_AGENT_ID : `agent-${randomUUID()}`;
+      const record = this.#createRecord(id, name, "", description);
+      if (managedMemdoor) {
+        record.provider = "acp";
+        record.model = `${MEMDOOR_RUNTIME_ID}/default`;
+        record.computerUse = false;
+      }
       record.avatarSeed = input.avatarSeed;
       record.avatarHue = input.avatarHue;
       applyAvatarColor(record, input.avatarHue, input.avatarColor);
@@ -413,6 +439,7 @@ export class AgentStore {
     operationId: string,
   ): Effect.fn.Return<AgentSummary, StoredStateFailure> {
     try {
+      if (sourceId === MEMDOOR_AGENT_ID) throw new Error(sourceText("error.agent.memdoorFixedRuntime"));
       if (!isUuidV4(operationId)) throw new Error("Invalid agent duplication operation id.");
       if (this.#database.commandResult(duplicationCommandId(operationId)) !== undefined) {
         throw new Error("This agent duplication operation is already committed.");

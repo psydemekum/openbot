@@ -42,6 +42,7 @@ import {
   widensAgentPermission,
   workspaceAccessEnforced,
 } from "@openbot/contracts/ipc";
+import { MEMDOOR_AGENT_ID } from "@openbot/contracts/ipc-memdoor";
 import type { AppTextKey } from "@openbot/i18n";
 import {
   ArrowLeftRight,
@@ -1383,45 +1384,47 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                 />
                 <InstructionsLimit text={draft.fields.description} tooLong="agent.description.tooLong" />
               </SettingsField>
-              <SettingsLinkGroup inset class="agent-settings-runtime-rows" title={t("agentSettings.groups.brain")}>
-                <ProviderModelPicker
-                  variant="field"
-                  icon={
-                    <span class="settings-link-icon">
-                      <Cpu aria-hidden="true" />
-                    </span>
-                  }
-                  ariaLabel={t("agentSettings.runtime.model")}
-                  provider={draft.runtime.provider}
-                  foreignProvider={agentForeignProvider()}
-                  value={draft.runtime.model}
-                  agentStatus={props.agentStatus}
-                  modelOptions={props.modelOptions}
-                  runtimeStatuses={props.providerRuntimeStatuses}
-                  customProviders={props.customProviders}
-                  customAgents={props.customAgents}
-                  onDownloadProvider={props.onDownloadProvider}
-                  onCancelProviderDownload={props.onCancelProviderDownload}
-                  onConnectProvider={props.onConnectProvider}
-                  canConnectProvider={props.canConnectProvider}
-                  onManageProviders={props.onManageProviders}
-                  disabledReason={t("agentSettings.runtime.modelUnavailable")}
-                  accountChoice
-                  providerAccountId={agentNextProviderAccountId(props.agent)}
-                  workspaceOnly={workspaceAccessEnforced(props.agent)}
-                  onChange={(nextModel, provider, accountId, effort) =>
-                    void selectModel(nextModel, provider, accountId, effort)
-                  }
-                  reasoningEffort={draft.runtime.reasoningEffort}
-                  onReasoningEffortChange={(effort) => {
-                    if (effort !== draft.runtime.reasoningEffort) void selectReasoning(effort);
-                  }}
-                  fastMode={props.fastMode}
-                  ultrafast={props.ultrafast}
-                  onFastModeChange={props.onFastModeChange}
-                />
-              </SettingsLinkGroup>
-              <Show when={props.backupModelsEditable}>
+              <Show when={props.agent.id !== MEMDOOR_AGENT_ID}>
+                <SettingsLinkGroup inset class="agent-settings-runtime-rows" title={t("agentSettings.groups.brain")}>
+                  <ProviderModelPicker
+                    variant="field"
+                    icon={
+                      <span class="settings-link-icon">
+                        <Cpu aria-hidden="true" />
+                      </span>
+                    }
+                    ariaLabel={t("agentSettings.runtime.model")}
+                    provider={draft.runtime.provider}
+                    foreignProvider={agentForeignProvider()}
+                    value={draft.runtime.model}
+                    agentStatus={props.agentStatus}
+                    modelOptions={props.modelOptions}
+                    runtimeStatuses={props.providerRuntimeStatuses}
+                    customProviders={props.customProviders}
+                    customAgents={props.customAgents}
+                    onDownloadProvider={props.onDownloadProvider}
+                    onCancelProviderDownload={props.onCancelProviderDownload}
+                    onConnectProvider={props.onConnectProvider}
+                    canConnectProvider={props.canConnectProvider}
+                    onManageProviders={props.onManageProviders}
+                    disabledReason={t("agentSettings.runtime.modelUnavailable")}
+                    accountChoice
+                    providerAccountId={agentNextProviderAccountId(props.agent)}
+                    workspaceOnly={workspaceAccessEnforced(props.agent)}
+                    onChange={(nextModel, provider, accountId, effort) =>
+                      void selectModel(nextModel, provider, accountId, effort)
+                    }
+                    reasoningEffort={draft.runtime.reasoningEffort}
+                    onReasoningEffortChange={(effort) => {
+                      if (effort !== draft.runtime.reasoningEffort) void selectReasoning(effort);
+                    }}
+                    fastMode={props.fastMode}
+                    ultrafast={props.ultrafast}
+                    onFastModeChange={props.onFastModeChange}
+                  />
+                </SettingsLinkGroup>
+              </Show>
+              <Show when={props.backupModelsEditable && props.agent.id !== MEMDOOR_AGENT_ID}>
                 <SettingsLinkGroup inset>
                   <SettingsLinkRow
                     ref={pageRowRef("backup-models")}

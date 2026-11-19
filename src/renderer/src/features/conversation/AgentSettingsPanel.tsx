@@ -11,6 +11,7 @@ import {
   type TestRoutineInput,
   userAssignedSkills,
 } from "@openbot/contracts/ipc";
+import { MEMDOOR_AGENT_ID } from "@openbot/contracts/ipc-memdoor";
 import { BookMarked, CalendarClock, FileText, Folder, Gauge, Puzzle, Table2, Upload } from "@openbot/ui";
 import { SettingsLinkGroup, SettingsLinkRow } from "@openbot/ui/components/SettingsPanel";
 import type { AgentProfile } from "@openbot/ui/data";
@@ -30,6 +31,7 @@ import SharedAgentSettingsPanel, {
   type AgentSettingsPanelProps as SharedAgentSettingsPanelProps,
 } from "@openbot/ui/features/conversation/AgentSettingsPanel";
 import type { AgentSettingLinkId, AgentSettingReveal } from "@openbot/ui/features/conversation/agent-setting-links";
+import { MemdoorTeamSettings } from "@openbot/ui/features/conversation/MemdoorTeamSettings";
 import { agentFilesLinkValue } from "@openbot/ui/features/files/AgentFilesView";
 import { useText } from "@openbot/ui/text";
 import { createEffect, createMemo, createSignal, createStore, Show, untrack } from "solid-js";
@@ -77,6 +79,7 @@ interface AgentSettingsPanelProps
   /** Routines can copy local run commands only on the computer that runs the agent. */
   localHost?: boolean;
   sessionSettingsEditable?: boolean;
+  memdoorTeamEditable?: boolean;
   /**
    * The memory cap of the agent's server: this computer's, or a joined server's for an owner or admin.
    * Absent for a member of a joined server: its host still refuses a memory past the cap.
@@ -171,6 +174,20 @@ function profilesWithProxies(
 
 export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   const { t, errorMessage } = useText();
+  const memdoorTeam = createMemo(() => {
+    if (!props.memdoorTeamEditable || props.agent.id !== MEMDOOR_AGENT_ID) return undefined;
+    const agentId = props.agent.id;
+    const serverId = props.skillsServerId;
+    const api = props.remoteClient
+      ? props.adminCalls?.memdoorTeam
+      : {
+          read: () => conversationPort().agent.getMemdoorTeamSettings(agentId, serverId),
+          save: (input: import("@openbot/contracts/ipc-memdoor").SaveMemdoorTeamSettings) =>
+            conversationPort().agent.saveMemdoorTeamSettings(input, serverId),
+        };
+    if (!api) return undefined;
+    return { read: () => api.read(agentId), save: api.save };
+  });
   const sessionSettings = createMemo((): AgentSessionSettingsApi | undefined => {
     if (!props.sessionSettingsEditable) return undefined;
     if (props.remoteClient) return props.adminCalls?.sessionSettings;
@@ -560,6 +577,16 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       detailOpen={draft.routines.open || draft.files.open || draft.memories.open || draft.instructions.open}
       links={
         <>
+          <Show when={memdoorTeam()}>
+            {(api) => (
+              <MemdoorTeamSettings
+                agentId={props.agent.id}
+                read={api().read}
+                save={api().save}
+                allowApiKey={props.localHost === true && !props.remoteClient}
+              />
+            )}
+          </Show>
           <Show when={sessionSettings()}>
             {(api) => (
               <AgentSessionSettings

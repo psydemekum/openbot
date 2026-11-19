@@ -11,6 +11,8 @@ export interface ConversationPort {
     OpenBotDesktopApi["agent"],
     | "addPreviewPage"
     | "readAgentSessionSettings"
+    | "getMemdoorTeamSettings"
+    | "saveMemdoorTeamSettings"
     | "listAgentNotificationLevels"
     | "askSideQuestion"
     | "saveSkillSuggestion"

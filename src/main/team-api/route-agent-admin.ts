@@ -10,6 +10,7 @@ import {
   parseUpdateAgentSpeedInput,
   parseUpdateAgentTaskLimitInput,
 } from "@openbot/contracts/ipc";
+import { isSaveMemdoorTeamSettings, MEMDOOR_AGENT_ID } from "@openbot/contracts/ipc-memdoor";
 import { AGENT_ADMIN_CAPABILITY, AGENT_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/agent-admin-v1";
 import {
   AGENT_BACKUP_MODELS_CAPABILITY,
@@ -34,6 +35,7 @@ import {
   AGENT_TASK_LIMIT_CAPABILITY,
   AGENT_TASK_LIMIT_ROUTES,
 } from "@openbot/contracts/team-protocol/agent-task-limit-v1";
+import { MEMDOOR_TEAM_CAPABILITY, MEMDOOR_TEAM_ROUTES } from "@openbot/contracts/team-protocol/memdoor-team-v1";
 import { MODEL_STEERING_CAPABILITY, MODEL_STEERING_ROUTES } from "@openbot/contracts/team-protocol/model-steering-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { runCauseEffect } from "../../backend/effect-boundary";
@@ -78,6 +80,28 @@ export async function routeAgentAdmin(
     if (error instanceof AgentNotFoundError) throw new HttpError(404, error.message);
     throw error;
   }
+}
+
+/** Owners and admins can edit team roles and models from a joined server. The API key stays local. */
+export async function routeMemdoorTeam(
+  context: TeamApiRequestContext,
+  admin: TeamApiAdmin | undefined,
+  hiddenAgentIds: ReadonlySet<string>,
+): Promise<RouteOutcome> {
+  const { method, url, capabilities, member, request, json } = context;
+  const read = url.pathname === MEMDOOR_TEAM_ROUTES.settings;
+  if (method !== "POST" || (!read && url.pathname !== MEMDOOR_TEAM_ROUTES.update)) return "unmatched";
+  const settings = admin?.memdoorTeam;
+  if (!settings || !capabilities.has(MEMDOOR_TEAM_CAPABILITY))
+    throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
+  requireAdmin(member);
+  const body = await readJson(request);
+  requireVisibleBodyAgent(body, hiddenAgentIds);
+  if (stringField(body, "agentId") !== MEMDOOR_AGENT_ID) throw new HttpError(404, "Unknown Memdoor team.");
+  if (read) return json(200, settings.read());
+  if (!isSaveMemdoorTeamSettings(body) || body.apiKey !== undefined)
+    throw new HttpError(400, "Invalid Memdoor team settings.");
+  return json(200, await runCauseEffect(settings.save(body)));
 }
 
 /**

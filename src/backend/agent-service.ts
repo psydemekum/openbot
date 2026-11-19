@@ -168,6 +168,7 @@ import {
   type WorkflowMediaSpecs,
   workspaceAccessEnforced,
 } from "@openbot/contracts/ipc";
+import { MEMDOOR_AGENT_ID, MEMDOOR_RUNTIME_ID } from "@openbot/contracts/ipc-memdoor";
 import { AGENT_THREAD_READS_LIMIT } from "@openbot/contracts/team-protocol/agent-thread-reads-v1";
 import { CLAUDE_API_KEY_ACCOUNT_ID } from "@openbot/contracts/team-protocol/claude-api-key-v1";
 import { ContextCompactRefusedError } from "@openbot/contracts/team-protocol/context-compact-v1";
@@ -3976,6 +3977,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       () => {
         this.#conversation.requireKnownAgent(input.agentId);
         const previous = this.#store.get(input.agentId);
+        if (
+          input.agentId === MEMDOOR_AGENT_ID &&
+          ((input.provider !== undefined && input.provider !== "acp") ||
+            (input.model !== undefined &&
+              input.model !== `${MEMDOOR_RUNTIME_ID}/default` &&
+              input.model !== previous?.model) ||
+            input.providerAccountId != null)
+        ) {
+          throw new AgentSettingsRefused(sourceText("error.agent.memdoorFixedRuntime"));
+        }
         const modelProvider = input.provider ?? (previous ? providerForAgent(previous) : undefined);
         const requestedModel = input.model
           ? (this.#endpoints
@@ -5317,12 +5328,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   ensureAgentDeletable(agentId: string): Effect.Effect<void, AgentLifecycleFailed> {
+    if (agentId === MEMDOOR_AGENT_ID)
+      return Effect.fail(
+        new AgentLifecycleFailed({
+          operation: "deleteAgent",
+          cause: new Error(sourceText("error.agent.memdoorFixedRuntime")),
+        }),
+      );
     return this.#removal
       .ensureDeletable(agentId)
       .pipe(Effect.mapError((failure) => new AgentLifecycleFailed({ operation: "deleteAgent", cause: failure.cause })));
   }
 
   deleteAgent(agentId: string): Effect.Effect<void, AgentLifecycleFailed> {
+    if (agentId === MEMDOOR_AGENT_ID) return this.ensureAgentDeletable(agentId);
     return Effect.sync(() => this.#planContinuation.cancel(agentId)).pipe(
       Effect.andThen(this.#removal.delete(agentId)),
       Effect.mapError((failure) => new AgentLifecycleFailed({ operation: "deleteAgent", cause: failure.cause })),

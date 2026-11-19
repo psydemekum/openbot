@@ -1,0 +1,21 @@
+# Memdoor in OpenBot
+
+The Windows fork includes one **Multi-Agent** backed by Memdoor's built-in `team-solve` workflow.
+Select it in a chat or in an OpenBot workflow agent step. Use **Agent settings → Memdoor team**
+to change the models and to add a model, reasoning effort or instructions for any of the ten roles.
+
+The defaults are `gpt-6.2-sol` for the team and `gpt-6-luna` for decisions. The executing host
+uses its configured official OpenAI API key. A dedicated key entered in the local Memdoor settings
+takes precedence. Role settings can also be changed by a connected web or desktop administrator.
+Enter credentials on the Windows host.
+
+Windows needs Git for Windows with Git Bash for Memdoor's workspace tasks. The worker runs with
+the Windows user's filesystem permissions. OpenBot relays Memdoor's workflow approval gates.
+
+Build the companion with `bun scripts/prepare-memdoor.ts` from the repository root. The script
+checks out the pinned [Memdoor revision](https://github.com/guregodevo/memdoor/tree/67e32e0cbf5bb0d055f155f526d16ee7863f179b),
+applies `openbot.patch`, and copies the binary and its Apache 2.0 license and notice into
+`build/memdoor`. The fork's Windows build packages that directory.
+
+Run `bun scripts/memdoor-team-e2e.ts` after building the companion. This check uses test keys and
+exercises the packaged entry point with the key removed, without making OpenAI requests.

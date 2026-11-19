@@ -189,6 +189,7 @@ import {
   type UpdateStatus,
   type WorkspaceDirectory,
 } from "@openbot/contracts/ipc";
+import { MEMDOOR_DECISION_MODEL, MEMDOOR_TEAM_MODEL, type MemdoorTeamSettings } from "@openbot/contracts/ipc-memdoor";
 import { ACTIVE_QUEUE_STATUSES } from "@openbot/contracts/team-protocol/agent-active-queues-v1";
 import { sourceText } from "@openbot/i18n/source";
 import {
@@ -658,6 +659,13 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     return proxy;
   };
   const sessionSettings = new Map<string, AgentSessionSettings>();
+  let memdoorTeam: MemdoorTeamSettings = {
+    teamModel: MEMDOOR_TEAM_MODEL,
+    decisionModel: MEMDOOR_DECISION_MODEL,
+    roles: {},
+    hasApiKey: false,
+    runtime: "ready",
+  };
   function previewSessionSettings(agentId: string): AgentSessionSettings {
     const agent = agents.find((candidate) => candidate.id === agentId);
     if (!agent) throw new Error("Agent not found");
@@ -2325,6 +2333,17 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           autoApprove: agentAutoApprovalEnabled(approvalAutomation, agentId),
           autoApproveLocked: false,
         };
+      },
+      getMemdoorTeamSettings: async () => structuredClone(memdoorTeam),
+      saveMemdoorTeamSettings: async ({ teamModel, decisionModel, roles, apiKey }) => {
+        memdoorTeam = {
+          ...memdoorTeam,
+          teamModel,
+          decisionModel,
+          roles,
+          hasApiKey: Boolean(apiKey) || memdoorTeam.hasApiKey,
+        };
+        return structuredClone(memdoorTeam);
       },
       getAgentHostSettings: async (agentId) => {
         const agent = agents.find((candidate) => candidate.id === agentId);

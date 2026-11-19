@@ -10,6 +10,7 @@ import {
   type TeamRealtimeEvent,
   type TestRoutineInput,
 } from "@openbot/contracts/ipc";
+import { isMemdoorTeamSettings, type SaveMemdoorTeamSettings } from "@openbot/contracts/ipc-memdoor";
 import { AGENT_FOLDERS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-folders-v1";
 import { AGENT_INSTRUCTIONS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-instructions-v1";
 import { AGENT_MEMORY_LIMIT_CAPABILITY } from "@openbot/contracts/team-protocol/agent-memory-limit-v1";
@@ -19,6 +20,7 @@ import {
   FEEDBACK_WITHDRAW_ROUTES,
 } from "@openbot/contracts/team-protocol/feedback-withdraw-v1";
 import { LIVE_VOICE_CAPABILITY } from "@openbot/contracts/team-protocol/live-voice-v1";
+import { MEMDOOR_TEAM_CAPABILITY, MEMDOOR_TEAM_ROUTES } from "@openbot/contracts/team-protocol/memdoor-team-v1";
 import { ROUTINE_PAUSE_REASONS_CAPABILITY } from "@openbot/contracts/team-protocol/routine-pause-reasons-v1";
 import { ROUTINE_RESULTS_CAPABILITY } from "@openbot/contracts/team-protocol/routine-results-v1";
 import {
@@ -82,6 +84,7 @@ function webHostAdmin(
   routineRunPlaceEnabled?: () => boolean,
   routinesOnceEnabled?: () => boolean,
   routinePauseReasonsEnabled?: () => boolean,
+  memdoorTeamEnabled?: () => boolean,
 ): NonNullable<ConversationRuntime["admin"]> {
   // `request()` names the connected host at call time, so a host switch reaches the new host.
   const eventRoutines = webEventRoutinesApi(
@@ -94,6 +97,18 @@ function webHostAdmin(
     () => routinePauseReasonsEnabled?.() === true,
   );
   return {
+    get memdoorTeam() {
+      if (memdoorTeamEnabled?.() !== true) return undefined;
+      const decode = (value: unknown) => {
+        if (!isMemdoorTeamSettings(value)) throw new Error("Invalid Memdoor team settings response.");
+        return value;
+      };
+      return {
+        read: (agentId: string) => request()("POST", MEMDOOR_TEAM_ROUTES.settings, decode, { agentId }),
+        save: ({ agentId, teamModel, decisionModel, roles }: SaveMemdoorTeamSettings) =>
+          request()("POST", MEMDOOR_TEAM_ROUTES.update, decode, { agentId, teamModel, decisionModel, roles }),
+      };
+    },
     get sessionSettings() {
       if (sessionSettingsEnabled?.() !== true) return undefined;
       return {
@@ -527,6 +542,7 @@ export function createWebConversationRuntime(
           routineRunPlaceEnabled,
           routinesOnceEnabled,
           routinePauseReasonsEnabled,
+          () => canAdminister?.(MEMDOOR_TEAM_CAPABILITY) === true,
         )
       : undefined,
   };

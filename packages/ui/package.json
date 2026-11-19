@@ -537,6 +537,7 @@
     "./features/transfer/instance-transfer.css": "./src/features/transfer/instance-transfer.css",
     "./features/conversation/AgentSessionSettings": "./src/features/conversation/AgentSessionSettings.tsx",
     "./features/conversation/AgentSettingsPanel": "./src/features/conversation/AgentSettingsPanel.tsx",
+    "./features/conversation/MemdoorTeamSettings": "./src/features/conversation/MemdoorTeamSettings.tsx",
     "./features/crm/CrmView": "./src/features/crm/CrmView.tsx",
     "./features/crm/crm-model": "./src/features/crm/crm-model.ts",
     "./features/crm/crm-state": "./src/features/crm/crm-state.ts",

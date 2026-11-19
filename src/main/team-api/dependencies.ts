@@ -24,6 +24,7 @@ import type { HostReleaseService } from "../host-release-service";
 import type { HostService } from "../host-service";
 import type { HostTurnLimitsPreferenceStore } from "../host-turn-limits-preference-store";
 import type { MachineAlertMonitor } from "../machine-alerts";
+import type { MemdoorTeam } from "../memdoor-team";
 import type { MemoryReviewPreferenceStore } from "../memory-review-preference-store";
 import type { ModelVisibility } from "../model-visibility";
 import type { PreferenceFileFailure } from "../preference-file";
@@ -544,6 +545,7 @@ export interface TeamApiAdmin {
    * `agent-plan-card-v1`: whether it shows its plan card before a long task.
    */
   agentHost?: AgentHostSettingsService;
+  memdoorTeam?: Pick<MemdoorTeam, "read" | "save">;
   /** `agent-defaults-v1`: the agent defaults of this computer, and which agents follow them. */
   agentDefaults?: AgentDefaultsSettingsService;
   /** `agent-folders-v1`: the folders that one agent can change besides its workspace. */

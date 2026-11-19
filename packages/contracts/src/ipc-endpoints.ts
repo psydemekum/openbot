@@ -432,6 +432,7 @@ import type {
   SignOutMcpServerInput,
   TestMcpServerInput,
 } from "./ipc-mcp-servers";
+import type { MemdoorTeamSettings, SaveMemdoorTeamSettings } from "./ipc-memdoor";
 import type { PinnedMessagesSnapshot, SetMessagePinnedInput } from "./ipc-message-pins";
 import type {
   AddMessagingOrchestratorInput,
@@ -2234,6 +2235,10 @@ export const IPC_ENDPOINTS = {
   // server answers only an owner or admin, and only when it advertises `agent-admin-v1`.
   agentAdmin: {
     getAgentHostSettings: scopedRequest<string, AgentHostSettings>()("agent:admin:get-host-settings"),
+    getMemdoorTeamSettings: scopedRequest<string, MemdoorTeamSettings>()("agent:admin:get-memdoor-team-settings"),
+    saveMemdoorTeamSettings: scopedRequest<SaveMemdoorTeamSettings, MemdoorTeamSettings>()(
+      "agent:admin:save-memdoor-team-settings",
+    ),
     updateAgentHostSettings: scopedRequest<UpdateAgentHostSettingsInput, AgentHostSettings>()(
       "agent:admin:update-host-settings",
     ),

@@ -2,3 +2,4 @@
 *.ico binary
 patches/*.patch -whitespace
 vendor/remote-desktop/patches/*.patch -whitespace
+vendor/memdoor/*.patch -whitespace

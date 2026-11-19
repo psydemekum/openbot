@@ -46,6 +46,8 @@ import {
   parseUpdateBrowserProfileInput,
   type UpdateAgentFastModeInput,
 } from "@openbot/contracts/ipc";
+import { guardedDecoder } from "@openbot/contracts/ipc-decoding";
+import { isMemdoorTeamSettings, isSaveMemdoorTeamSettings } from "@openbot/contracts/ipc-memdoor";
 import { AGENT_ADMIN_CAPABILITY, AGENT_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/agent-admin-v1";
 import {
   AGENT_BACKUP_MODELS_CAPABILITY,
@@ -83,6 +85,7 @@ import {
 } from "@openbot/contracts/team-protocol/browser-proxies-v1";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import { GITHUB_SKILLS_CAPABILITY, GITHUB_SKILLS_ROUTES } from "@openbot/contracts/team-protocol/github-skills-v1";
+import { MEMDOOR_TEAM_CAPABILITY, MEMDOOR_TEAM_ROUTES } from "@openbot/contracts/team-protocol/memdoor-team-v1";
 import { SKILLS_ADMIN_CAPABILITY, SKILLS_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/skills-admin-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { runCauseEffect } from "../../backend/effect-boundary";
@@ -92,6 +95,7 @@ import type { AgentHostSettingsService } from "../agent-host-settings";
 import type { AgentMarketplaceService } from "../agent-marketplace-service";
 import type { AgentTemplateService } from "../agent-template-service";
 import type { BrowserProfileService } from "../browser-profile-service";
+import { type MemdoorTeam, requireMemdoorAgentId } from "../memdoor-team";
 import {
   decodeAgentHostSettingsFromHost,
   decodeGithubSkillSourceFromHost,
@@ -127,6 +131,7 @@ interface AgentAdminRemoteServers {
 interface AgentAdminIpcDependencies {
   settings: AgentAdminSettingsService;
   hostSettings: AgentHostSettingsService;
+  memdoorTeam: Pick<MemdoorTeam, "read" | "save">;
   defaultsSettings: AgentDefaultsSettingsService;
   browserProfiles: BrowserProfileService;
   skills: Pick<SkillMarketplaceService, "listInstalled" | "install" | "uninstall" | "setEnabled" | "readGithub">;
@@ -144,6 +149,7 @@ function decodeRemoteInstalledSkill(value: unknown): InstalledSkill {
 export function agentAdminIpcHandlers({
   settings,
   hostSettings,
+  memdoorTeam,
   defaultsSettings,
   browserProfiles,
   skills,
@@ -155,6 +161,13 @@ export function agentAdminIpcHandlers({
     if (!remoteServers.supportsCapability(serverId, AGENT_ADMIN_CAPABILITY))
       throw new Error(sourceText("error.agent.settingsLocalOnly"));
     return runCauseEffect(remoteServers.request(serverId, path, decodeAgentAdminSettings, { method: "POST", body }));
+  }
+
+  const decodeMemdoor = guardedDecoder(isMemdoorTeamSettings, "Memdoor team settings");
+  function remoteMemdoor(serverId: string, path: string, body: unknown) {
+    if (!remoteServers.supportsCapability(serverId, MEMDOOR_TEAM_CAPABILITY))
+      throw new Error(sourceText("error.agent.settingsLocalOnly"));
+    return runCauseEffect(remoteServers.request(serverId, path, decodeMemdoor, { method: "POST", body }));
   }
 
   function remoteSkills<T>(serverId: string, path: string, body: unknown, decoder: ResponseDecoder<T>): Promise<T> {
@@ -182,6 +195,26 @@ export function agentAdminIpcHandlers({
 
   return {
     agentAdmin: {
+      getMemdoorTeamSettings: scopedHandler((value) => requireString(value, "agentId"), {
+        local: (agentId) => {
+          requireMemdoorAgentId(agentId);
+          return memdoorTeam.read();
+        },
+        remote: (agentId, serverId) => remoteMemdoor(serverId, MEMDOOR_TEAM_ROUTES.settings, { agentId }),
+      }),
+      saveMemdoorTeamSettings: scopedHandler(
+        (value) => {
+          if (!isSaveMemdoorTeamSettings(value)) throw new Error("Invalid Memdoor team settings.");
+          return value;
+        },
+        {
+          local: (input) => runCauseEffect(memdoorTeam.save(input)),
+          remote: (input, serverId) => {
+            if (input.apiKey !== undefined) throw new Error("Set the API key in the desktop app on the Memdoor host.");
+            return remoteMemdoor(serverId, MEMDOOR_TEAM_ROUTES.update, input);
+          },
+        },
+      ),
       getAgentHostSettings: scopedHandler((value) => requireString(value, "agentId"), {
         local: (agentId) => hostSettings.read(agentId),
         remote: (agentId, serverId) => remoteHostSettings(serverId, AGENT_HOST_SETTINGS_ROUTES.settings, { agentId }),

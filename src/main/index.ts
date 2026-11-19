@@ -877,6 +877,7 @@ function registerIpcHandlers({
   approvalAutomation,
   agentAdminSettings,
   agentHostSettings,
+  memdoorTeam,
   agentDefaultsSettings,
   agentFolders,
   agentInstructions,
@@ -1141,6 +1142,7 @@ function registerIpcHandlers({
     ...agentAdminIpcHandlers({
       settings: agentAdminSettings,
       hostSettings: agentHostSettings,
+      memdoorTeam,
       defaultsSettings: agentDefaultsSettings,
       browserProfiles,
       skills,

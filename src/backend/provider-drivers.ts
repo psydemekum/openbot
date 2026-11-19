@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -13,6 +14,7 @@ import {
   type ProviderEnvironmentProvider,
   type ProviderModelSource,
 } from "@openbot/contracts/ipc";
+import { MEMDOOR_RUNTIME_ID } from "@openbot/contracts/ipc-memdoor";
 import { sourceText } from "@openbot/i18n/source";
 import { Effect } from "effect";
 import { AcpAgentClient, type AcpHistoryPersistence } from "./acp-client";
@@ -1888,10 +1890,15 @@ function customAgentChild(
   launchPath?: string | null,
 ): AgentClient {
   // A `PATH` the user saved on the agent wins over the login shell's.
-  const env = {
+  const env: Record<string, string> = {
     ...(launchPath ? { PATH: launchPath } : {}),
     ...Object.fromEntries(config.env.map((entry) => [entry.name, entry.value])),
   };
+  const memdoorState = config.id === MEMDOOR_RUNTIME_ID && env.MEMDOOR_OPENBOT_STATE_DIR;
+  if (memdoorState) {
+    const state = folder ? createHash("sha256").update(folder).digest("hex").slice(0, 24) : "catalog";
+    env.MEMDOOR_OPENBOT_STATE_DIR = join(memdoorState, state);
+  }
   const values = config.env.map((entry) => entry.value);
   return new AcpAgentClient({ executable, version: "", source: "system" }, timeout, {
     provider: "acp",
@@ -1927,7 +1934,7 @@ function customAgentChild(
                   !(name in env || (name === "SSL_CERT_FILE" && "SSL_CERT_DIR" in env)),
               ),
             ),
-          mcpServers: context.mcpServers,
+          mcpServers: memdoorState ? undefined : context.mcpServers,
           reportMcpDrops: context.reportMcpDrops,
           mcpToolRuntimes: context.mcpToolRuntimes,
           mcpEndpoint: context.mcpEndpoint,

@@ -71,6 +71,7 @@ keys
 *firebase-adminsdk*.json
 # Agent task checklist. Local to one worktree.
 /TASKS.md
+/build/memdoor/
 
 # Persistent local development identity and migration recovery.
 .openbot/

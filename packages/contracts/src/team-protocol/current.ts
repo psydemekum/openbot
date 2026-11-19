@@ -123,6 +123,7 @@ import { MCP_ACCESS_CAPABILITY } from "./mcp-access-v1";
 import { MCP_MANY_SERVERS_CAPABILITY } from "./mcp-many-servers-v1";
 import { MCP_SIGN_IN_APP_CAPABILITY } from "./mcp-sign-in-app-v1";
 import { MCP_SIGN_IN_CAPABILITY } from "./mcp-sign-in-v1";
+import { MEMDOOR_TEAM_CAPABILITY } from "./memdoor-team-v1";
 import { TEAM_MEMORY_CHANGES_CAPABILITY } from "./memory-changes-v1";
 import { MEMORY_REVIEW_CAPABILITY } from "./memory-review-v1";
 import { TEAM_MESSAGE_CLIENT_ID_CAPABILITY } from "./message-client-id-v1";
@@ -406,6 +407,7 @@ export {
   MCP_SERVERS_CAPABILITY,
   MCP_SIGN_IN_APP_CAPABILITY,
   MCP_SIGN_IN_CAPABILITY,
+  MEMDOOR_TEAM_CAPABILITY,
   MEMORY_REVIEW_CAPABILITY,
   MESSAGE_DELETE_CAPABILITY,
   MESSAGE_PINS_CAPABILITY,
@@ -796,6 +798,7 @@ const TEAM_CAPABILITY_REGISTRY = [
   [WORKFLOW_NOTIFICATIONS_CAPABILITY, V10],
   [WORKFLOWS_FILES_CAPABILITY, V10],
   [WORKFLOWS_FILE_AGENT_CAPABILITY, V10],
+  [MEMDOOR_TEAM_CAPABILITY, V10],
 ] as const satisfies readonly (readonly [string, TeamCapabilityPlacement])[];
 
 export const TEAM_CURRENT_CAPABILITIES = TEAM_CAPABILITY_REGISTRY.map(([capability]) => capability);
