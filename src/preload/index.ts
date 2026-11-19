@@ -257,6 +257,7 @@ import {
   decodeComputerUseState,
 } from "./computer-use-decoding";
 import {
+  decodeActiveQueues,
   decodeAgentTask,
   decodeAgentTaskReadState,
   decodeAgentTaskReadStates,
@@ -377,6 +378,7 @@ import {
   decodeWorkflowMediaCredits,
   decodeWorkflowMediaPrice,
   decodeWorkflowMediaProviders,
+  decodeWorkflowNotifications,
   decodeWorkflowPictureId,
   decodeWorkflowRunDetail,
   decodeWorkflowRunPage,
@@ -679,6 +681,7 @@ const agentGroup = bridgeGroup(IPC_ENDPOINTS.agent, {
   deleteConversationMessage: decodeVoid,
   withdrawFeedback: decodeWithdrawFeedbackResult,
   listQueue: decodeQueue,
+  listActiveQueues: decodeActiveQueues,
   listWaits: decodeWaits,
   listPinnedMessages: decodePinnedMessages,
   setMessagePinned: decodePinnedMessages,
@@ -947,6 +950,7 @@ const openbotApi: OpenBotDesktopApi = {
     mediaProviders: decodeWorkflowMediaProviders,
     mediaCredits: decodeWorkflowMediaCredits,
     mediaCatalog: decodeWorkflowMediaCatalog,
+    notifications: decodeWorkflowNotifications,
     mediaPrice: decodeWorkflowMediaPrice,
   }),
   crm: bridgeGroup(IPC_ENDPOINTS.crm, {

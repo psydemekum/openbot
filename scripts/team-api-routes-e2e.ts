@@ -10,6 +10,7 @@
 // over the real service and store,
 // where each routine runs (`routine-run-place-v1`) over stand-in routine records,
 // which run paused each paused routine (`routine-pause-reasons-v1`) over the same records,
+// the open work of the queues of all agents in one read (`agent-active-queues-v1`),
 // a password that an admin saves from the secure card (`browser-secret-vault-v1`),
 // a transfer file larger than one part, sent and read in parts (`instance-transfer-chunks-v1`),
 // the whole copy of a pending approval (`pending-approval-v1`),
@@ -98,6 +99,11 @@ import { type DynamicRecord, isDynamicRecord } from "@openbot/contracts/runtime-
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_PROTOCOL_V1_WEBSOCKET } from "@openbot/contracts/team-protocol";
 import {
+  AGENT_ACTIVE_QUEUE_DELIVERY_LIMIT,
+  AGENT_ACTIVE_QUEUES_CAPABILITY,
+  AGENT_ACTIVE_QUEUES_ROUTES,
+} from "@openbot/contracts/team-protocol/agent-active-queues-v1";
+import {
   AGENT_BACKUP_MODELS_CAPABILITY,
   AGENT_BACKUP_MODELS_ROUTES,
 } from "@openbot/contracts/team-protocol/agent-backup-models-v1";
@@ -143,6 +149,10 @@ import {
   AGENT_TASK_LIMIT_ROUTES,
 } from "@openbot/contracts/team-protocol/agent-task-limit-v1";
 import { AGENT_TASKS_CAPABILITY, AGENT_TASKS_ROUTES } from "@openbot/contracts/team-protocol/agent-tasks-v1";
+import {
+  AGENT_THREAD_FILES_CAPABILITY,
+  AGENT_THREAD_FILES_ROUTES,
+} from "@openbot/contracts/team-protocol/agent-thread-files-v1";
 import {
   AGENT_THREAD_PAGES_CAPABILITY,
   AGENT_THREAD_PAGES_ROUTES,
@@ -406,6 +416,7 @@ import {
   TEAM_PROTOCOL_VERSION_HEADER,
 } from "@openbot/contracts/team-protocol/v1";
 import { TEAM_LONG_CAPABILITY_LISTS_CAPABILITY, TEAM_PROTOCOL_V9 } from "@openbot/contracts/team-protocol/v9";
+import { TEAM_PROTOCOL_V10 } from "@openbot/contracts/team-protocol/v10";
 import { VAULT_IMPORT_CAPABILITY, VAULT_IMPORT_ROUTES } from "@openbot/contracts/team-protocol/vault-import-v1";
 import { VAULT_CAPABILITY, VAULT_ROUTES } from "@openbot/contracts/team-protocol/vault-v1";
 import { VAULT_V2_CAPABILITY, VAULT_V2_ROUTES } from "@openbot/contracts/team-protocol/vault-v2";
@@ -437,6 +448,7 @@ import { strToU8, unzipSync, zipSync } from "fflate";
 import { ForbiddenAttentionAnswer, InactiveAttentionRequest } from "../src/backend/agent/inactive-attention-request";
 import { SteerUnsupportedError } from "../src/backend/agent/queue-controls";
 import { AgentLifecycleFailed } from "../src/backend/agent-service";
+import { AgentThreadLimitError } from "../src/backend/agent-tasks/agent-tasks";
 import { AgentWaitError } from "../src/backend/agent-waits/agent-wait-store";
 import { BrowserProfileStore } from "../src/backend/browser-profiles/browser-profile-store";
 import { BrowserProxyStore } from "../src/backend/browser-profiles/browser-proxy-store";
@@ -703,6 +715,9 @@ const FAST_MODE_MODELS: AgentModelOption[] = [
 
 const SPENT_WEEK = { usedPercent: 100, windowDurationMins: 10_080, resetsAt: 1_900_000_000 };
 
+/** The text of the only thread start of this run, which the host refuses at the open-thread limit. */
+const THREAD_LIMIT_START_TEXT = "A new topic";
+
 function unused(name: string): () => never {
   return () => {
     throw new Error(`${name} is not used by the Team API routes E2E run.`);
@@ -774,6 +789,36 @@ const agents = [
 const transferAgent = agent("agent-transfer", "Tess", "claude", "claude-sonnet-4-5");
 mkdirSync(transferAgent.workspacePath, { recursive: true });
 writeFileSync(join(transferAgent.workspacePath, "random.bin"), randomBytes(INSTANCE_TRANSFER_CHUNK_BYTES + 4096));
+
+/** `agent-active-queues-v1`: the text of each open delivery, and how many each agent has. */
+let activeQueueText = "open work";
+let activeQueueDeliveries = 1;
+
+/** The open work of a queue, with an attachment whose preview URL is an address on the host. */
+function activeQueue(agentId: string): QueueSnapshot {
+  const [delivery] = queueSnapshot(agentId).deliveries;
+  if (!delivery) throw new Error("The queue fixture has no delivery.");
+  return {
+    agentId,
+    ...(agentId === "agent-oc" ? { welcome: true as const } : {}),
+    deliveries: Array.from({ length: agentId === "agent-ada" ? activeQueueDeliveries : 1 }, (_, index) => ({
+      ...delivery,
+      id: `delivery-${agentId}-${index}`,
+      text: activeQueueText,
+      attachments: [
+        {
+          id: "attachment-1",
+          name: "notes.txt",
+          size: 4,
+          kind: "file" as const,
+          mimeType: "text/plain",
+          previewKind: "text" as const,
+          previewUrl: "http://127.0.0.1:1/preview/attachment-1",
+        },
+      ],
+    })),
+  };
+}
 
 function queueSnapshot(agentId: string): QueueSnapshot {
   return {
@@ -1163,6 +1208,10 @@ const fakeAgents: TeamApiAgents = {
   listQueue: (agentId) => {
     record("listQueue", agentId);
     return queueSnapshot(agentId);
+  },
+  listActiveQueues: (agentIds) => {
+    record("listActiveQueues", agentIds);
+    return agentIds.map(activeQueue);
   },
   acknowledgeFailedTurn: (agentId, turnId) => record("acknowledgeFailedTurn", agentId, turnId),
   cancelQueuedMessage: (agentId, deliveryId) => Effect.sync(() => record("cancelQueuedMessage", agentId, deliveryId)),
@@ -1703,9 +1752,15 @@ const fakeAgentTasks: TeamApiAgentTasks = {
       hasNewer: held,
     };
   },
-  startTask: unused("startTask"),
+  startTask: (input, sender) => {
+    if (input.text !== THREAD_LIMIT_START_TEXT) return unused("startTask")();
+    record("startTask", input, sender);
+    return Effect.fail(new AgentLifecycleFailed({ operation: "start task", cause: new AgentThreadLimitError() }));
+  },
   runQueuedMessageAsTask: (input) => {
     record("runQueuedMessageAsTask", input);
+    if (input.deliveryId === "delivery-full")
+      return Effect.fail(new AgentLifecycleFailed({ operation: "create task", cause: new AgentThreadLimitError() }));
     if (input.deliveryId !== "delivery-1")
       return Effect.fail(
         new AgentLifecycleFailed({
@@ -1741,7 +1796,11 @@ const fakeAgentTasks: TeamApiAgentTasks = {
     }),
   stopTask: unused("stopTask"),
   closeTask: unused("closeTask"),
-  reopenTask: unused("reopenTask"),
+  reopenTask: (input) => {
+    if (input.taskId !== "task-archived") return unused("reopenTask")();
+    record("reopenTask", input);
+    throw new AgentThreadLimitError();
+  },
   renameTask: unused("renameTask"),
   deleteTask: unused("deleteTask"),
   listTaskReads: unused("listTaskReads"),
@@ -3015,7 +3074,7 @@ try {
       "compatibility answers without protocol headers and names the supported range",
       compatibility.status === 200 &&
         field(compatibility.body, "protocol", "minimum") === 1 &&
-        field(compatibility.body, "protocol", "maximum") === TEAM_PROTOCOL_V9,
+        field(compatibility.body, "protocol", "maximum") === TEAM_PROTOCOL_V10,
       summary(compatibility),
     );
     const noHeaders = await call("GET", TEAM_API_ROUTES.identity, { protocol: null });
@@ -3032,12 +3091,12 @@ try {
       badHeader.status === 400 && field(badHeader.body, "code") === "protocol_error",
       summary(badHeader),
     );
-    const newer = await call("GET", TEAM_API_ROUTES.identity, { protocol: TEAM_PROTOCOL_V9 + 1 });
+    const newer = await call("GET", TEAM_API_ROUTES.identity, { protocol: TEAM_PROTOCOL_V10 + 1 });
     check(
       "a newer protocol gets 426 host_update_required with the client version",
       newer.status === 426 &&
         field(newer.body, "code") === "host_update_required" &&
-        field(newer.body, "client", "protocol") === TEAM_PROTOCOL_V9 + 1,
+        field(newer.body, "client", "protocol") === TEAM_PROTOCOL_V10 + 1,
       summary(newer),
     );
     const zero = await call("GET", TEAM_API_ROUTES.identity, { protocol: 0 });
@@ -10941,6 +11000,97 @@ try {
     );
   }
 
+  // ---- The open work of all queues (agent-active-queues-v1) ----
+  {
+    const capabilities = [AGENT_HIDDEN_CAPABILITY, AGENT_ACTIVE_QUEUES_CAPABILITY];
+    const compatibility = await call("GET", TEAM_API_ROUTES.compatibility, { protocol: TEAM_PROTOCOL_V9 });
+    const older = await call("GET", TEAM_API_ROUTES.compatibility, { protocol: 8 });
+    check(
+      "the host advertises agent-active-queues-v1 to a protocol 9 peer and not to a protocol 8 peer",
+      list(field(compatibility.body, "capabilities")).includes(AGENT_ACTIVE_QUEUES_CAPABILITY) &&
+        !list(field(older.body, "capabilities")).includes(AGENT_ACTIVE_QUEUES_CAPABILITY),
+      [summary(compatibility), summary(older)],
+    );
+    const unsupported = await call("POST", AGENT_ACTIVE_QUEUES_ROUTES.list, { token: bobToken, json: {} });
+    const unknownKey = await call("POST", AGENT_ACTIVE_QUEUES_ROUTES.list, {
+      token: bobToken,
+      json: { agentId: "agent-ada" },
+      capabilities,
+    });
+    check(
+      "the list route without the capability gets 400 activeQueuesUnsupported, and a body with another key gets 400",
+      errorIs(unsupported, 400, sourceText("error.team.activeQueuesUnsupported")) && unknownKey.status === 400,
+      [summary(unsupported), summary(unknownKey)],
+    );
+    const all = await call("POST", AGENT_ACTIVE_QUEUES_ROUTES.list, { token: bobToken, json: {}, capabilities });
+    const visibleIds = list(field(all.body, "queues")).map((queue) => field(queue, "agentId"));
+    const firstAttachment = field(list(field(list(field(all.body, "queues"))[0], "deliveries"))[0], "attachments");
+    check(
+      "a member reads the open work of every agent that the member can see in one read, with no preview URL, and the welcome flag",
+      all.status === 200 &&
+        visibleIds.length > 0 &&
+        visibleIds.includes("agent-ada") &&
+        isDeepStrictEqual(field(all.body, "omitted"), []) &&
+        list(firstAttachment).every((attachment) => field(attachment, "previewUrl") === null) &&
+        list(field(all.body, "queues")).some(
+          (queue) => field(queue, "agentId") === "agent-oc" && field(queue, "welcome") === true,
+        ),
+      summary(all),
+    );
+    const named = await call("POST", AGENT_ACTIVE_QUEUES_ROUTES.list, {
+      token: bobToken,
+      json: { agentIds: ["agent-ada", "agent-none"] },
+      capabilities,
+    });
+    const oldClient = await call("POST", AGENT_ACTIVE_QUEUES_ROUTES.list, {
+      token: bobToken,
+      json: { agentIds: ["agent-ada", "agent-pi"] },
+      capabilities,
+      protocol: 6,
+    });
+    accessLevels = { revision: 37, everyone: { "agent-ada": "none" }, roles: [] };
+    const noAccess = await call("POST", AGENT_ACTIVE_QUEUES_ROUTES.list, { token: bobToken, json: {}, capabilities });
+    accessLevels = { revision: 38, everyone: {}, roles: [] };
+    const ids = (reply: Reply) => list(field(reply.body, "queues")).map((queue) => field(queue, "agentId"));
+    check(
+      "named agents limit the read; an unknown agent, an agent hidden from the client and an agent without access are left out with no error",
+      isDeepStrictEqual(ids(named), ["agent-ada"]) &&
+        isDeepStrictEqual(ids(oldClient), ["agent-ada"]) &&
+        noAccess.status === 200 &&
+        !ids(noAccess).includes("agent-ada") &&
+        ids(noAccess).length === visibleIds.length - 1,
+      [summary(named), summary(oldClient), summary(noAccess)],
+    );
+    // Agent Ada has more open work than one frame carries: the answer names Ada in `omitted`, and the
+    // client reads Ada on the released route.
+    activeQueueText = "x".repeat(90_000);
+    activeQueueDeliveries = 20;
+    const large = await call("POST", AGENT_ACTIVE_QUEUES_ROUTES.list, { token: bobToken, json: {}, capabilities });
+    activeQueueText = "open work";
+    activeQueueDeliveries = 1;
+    check(
+      "an agent whose open work does not fit in one WebRTC frame is named in omitted, and the other agents stay in the answer",
+      large.status === 200 &&
+        isDeepStrictEqual(field(large.body, "omitted"), ["agent-ada"]) &&
+        !ids(large).includes("agent-ada") &&
+        ids(large).length === visibleIds.length - 1 &&
+        Buffer.byteLength(large.text) <= WEBRTC_FRAME_BODY_BUDGET,
+      { status: large.status, bytes: large.text.length, omitted: field(large.body, "omitted"), queues: ids(large) },
+    );
+    // Agent Ada has more open deliveries than one answer carries: Ada is omitted, not cut.
+    activeQueueDeliveries = AGENT_ACTIVE_QUEUE_DELIVERY_LIMIT + 1;
+    const long = await call("POST", AGENT_ACTIVE_QUEUES_ROUTES.list, { token: bobToken, json: {}, capabilities });
+    activeQueueDeliveries = 1;
+    check(
+      "an agent with more open deliveries than one answer carries is named in omitted, not cut",
+      long.status === 200 &&
+        isDeepStrictEqual(field(long.body, "omitted"), ["agent-ada"]) &&
+        !ids(long).includes("agent-ada") &&
+        ids(long).length === visibleIds.length - 1,
+      { status: long.status, omitted: field(long.body, "omitted"), queues: ids(long) },
+    );
+  }
+
   // ---- Routine result destinations (routine-results-v1) ----
   {
     const resultCapabilities = [ROUTINE_RESULTS_CAPABILITY];
@@ -12510,6 +12660,42 @@ try {
         errorIs(gone, 409, sourceText("error.backend.queuedMessageUnavailable")) &&
         isDeepStrictEqual(callsOf("runQueuedMessageAsTask"), [[body], [{ ...body, deliveryId: "delivery-gone" }]]),
       [summary(moved), summary(gone)],
+    );
+    // The limit text holds the count. The host sent "Request failed." for it before (#11739).
+    const limit = sourceText("error.backend.threadOpenLimitReached", { count: INPUT_LIMITS.agentTasks });
+    const loggedBeforeLimit = logged.length;
+    const fullMove = await call("POST", AGENT_QUEUE_TASK_ROUTES.run, {
+      token: bobToken,
+      ...v9,
+      json: { ...body, deliveryId: "delivery-full" },
+    });
+    const tasksV9 = { capabilities: [AGENT_TASKS_CAPABILITY], protocol: TEAM_PROTOCOL_V9 };
+    const fullStart = await call("POST", AGENT_TASKS_ROUTES.start, {
+      token: bobToken,
+      ...tasksV9,
+      json: { agentId: "agent-ada", text: THREAD_LIMIT_START_TEXT },
+    });
+    const fullFilesStart = await call("POST", AGENT_THREAD_FILES_ROUTES.start, {
+      token: bobToken,
+      capabilities: [AGENT_THREAD_FILES_CAPABILITY],
+      protocol: TEAM_PROTOCOL_V9,
+      json: { agentId: "agent-ada", text: THREAD_LIMIT_START_TEXT, attachmentDraftIds: ["draft-limit"] },
+    });
+    const fullRestore = await call("POST", AGENT_TASKS_ROUTES.reopen, {
+      token: bobToken,
+      ...tasksV9,
+      json: { agentId: "agent-ada", taskId: "task-archived" },
+    });
+    check(
+      "a thread start, a start with files, a move into a new thread and a restore at the open-thread limit tell the member to archive a thread",
+      errorIs(fullMove, 409, limit) &&
+        errorIs(fullStart, 409, limit) &&
+        errorIs(fullFilesStart, 409, limit) &&
+        errorIs(fullRestore, 409, limit) &&
+        callsOf("startTask").length === 2 &&
+        callsOf("reopenTask").length === 1 &&
+        logged.slice(loggedBeforeLimit).every((line) => !line.includes("Team API request failed")),
+      [summary(fullMove), summary(fullStart), summary(fullFilesStart), summary(fullRestore)],
     );
   }
 

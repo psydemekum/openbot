@@ -1,6 +1,8 @@
 import { defineMessages } from "../../../message";
 
 export const messages = defineMessages("mobile.workflow", {
+  "mobile.workflow.inbox.title": "Workflow notifications",
+  "mobile.workflow.inbox.empty": "No workflow notifications yet.",
   "mobile.workflow.file.format": "Format",
   "mobile.workflow.file.filename": "File name",
   "mobile.workflow.file.notify": "Notify when saved",

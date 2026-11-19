@@ -189,6 +189,7 @@ import {
   type UpdateStatus,
   type WorkspaceDirectory,
 } from "@openbot/contracts/ipc";
+import { ACTIVE_QUEUE_STATUSES } from "@openbot/contracts/team-protocol/agent-active-queues-v1";
 import { sourceText } from "@openbot/i18n/source";
 import {
   AGENT_IMPORT_PREVIEW,
@@ -302,6 +303,7 @@ export interface MockOpenBotOptions
   routineFlowLinks?: RoutineFlowLink[];
   routineFlowSteps?: RoutineFlowStep[];
   workflows?: MockWorkflowSeed[];
+  workflowNotifications?: import("@openbot/contracts/ipc").WorkflowNotification[];
   /** The CRM when the preview starts. Without it, the CRM is empty. */
   crm?: MockCrmSeed;
   customProviders?: CustomProviderSummary[];
@@ -1725,9 +1727,12 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       { routines, routineRuns, links: options.routineFlowLinks, steps: options.routineFlowSteps },
       (agentId) => emitAgentEvent({ type: "routine-flows-changed", agentId }),
     ),
-    workflows: mockWorkflows(options.workflows ?? [], (workflowId) =>
-      emitAgentEvent({ type: "workflows-changed", workflowId }),
-    ),
+    workflows: {
+      ...mockWorkflows(options.workflows ?? [], (workflowId) =>
+        emitAgentEvent({ type: "workflows-changed", workflowId }),
+      ),
+      notifications: async () => options.workflowNotifications ?? [],
+    },
     crm: mockCrm(options.crm ?? {}, () => emitAgentEvent({ type: "crm-changed" })),
     routineResults: mockRoutineResults(routines, options, (agentId) =>
       emitAgentEvent({ type: "routines-changed", agentId }),
@@ -3366,6 +3371,16 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         });
       },
       listQueue: async (agentId) => clone(queues.get(agentId) ?? emptyQueue(agentId)),
+      listActiveQueues: async (agentIds) => ({
+        queues: agentIds.map((agentId) => {
+          const queue = clone(queues.get(agentId) ?? emptyQueue(agentId));
+          return {
+            ...queue,
+            deliveries: queue.deliveries.filter((delivery) => ACTIVE_QUEUE_STATUSES.has(delivery.status)),
+          };
+        }),
+        omitted: [],
+      }),
       listWaits: async (agentId) => ({ agentId, waits: [] }),
       cancelWait: async () => undefined,
       listTasks: async (agentId) => taskList(agentId),

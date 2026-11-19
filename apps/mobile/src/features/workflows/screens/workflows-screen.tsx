@@ -14,6 +14,7 @@ import { LargeTitleScrollView } from "@/shared/components/large-title";
 import { isAndroid } from "@/shared/lib/platform";
 import { useText } from "@/shared/lib/text";
 import { typeScale } from "@/shared/lib/type-scale";
+import { WorkflowNotificationList } from "../components/workflow-notification-list";
 
 const NO_IDS: readonly string[] = [];
 
@@ -85,6 +86,7 @@ export function WorkflowsScreen() {
         caption={serverName}
         contentContainerClassName="gap-7 px-4 pt-3"
       >
+        {online && supported ? <WorkflowNotificationList key={serverId} serverId={serverId} /> : null}
         {note ? (
           <View className="gap-2 px-1">
             <Typography.Paragraph className="text-text-secondary" style={typeScale.preview}>

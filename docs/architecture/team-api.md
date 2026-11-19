@@ -299,11 +299,26 @@ with an update prompt. See [Providers](providers.md) for the frozen lists that h
 from peers below 8.
 
 Protocol 9 is the protocol 8 wire with capability lists of up to 256 names (`v9.ts`). Protocols 7
-and 8 read at most 128 capabilities, and their lists are full. A capability added after them is in
-`TEAM_PROTOCOL_V9_ONLY_CAPABILITIES` (`current.ts`): a host leaves it out of the compatibility list
-of a peer below 9, and a client sends it only to a host that negotiated 9. On WebRTC, where no
-protocol header is sent, the marker `long-capability-lists-v1` says that a peer reads 256. It is in
-the bootstrap list, so the first compatibility read of a protocol 9 host is already complete.
+and 8 read at most 128 capabilities, and their lists are full. A capability with `since: 9` in
+`TEAM_CAPABILITY_REGISTRY` (`current.ts`) is in `TEAM_PROTOCOL_V9_ONLY_CAPABILITIES`: a host leaves
+it out of the compatibility list of a peer below 9, and a client sends it only to a host that
+negotiated 9. On WebRTC, where no protocol header is sent, the marker `long-capability-lists-v1` says
+that a peer reads 256. It is in the bootstrap list, so the first compatibility read of a protocol 9
+host is already complete.
+
+Protocol 10 is the protocol 9 wire with two capability lists (`v10.ts`). The protocol 9 list is full,
+and protocol 10 does not send it again: it is the frozen baseline. A protocol 10 peer sends
+`capabilities`, with the names after protocol 9 and the markers, and `absent`, with the baseline
+names that it does not serve. The full set is `(baseline - absent) + capabilities`. Over HTTP the
+lists are the `OpenBot-Capabilities` and `OpenBot-Absent-Capabilities` headers; over WebRTC they are
+the `capabilities` and `absent` keys of `http.request`, and the marker `capability-baseline-v1` says
+that a request has the two lists. `capabilities` also keeps `long-capability-lists-v1`, so a host of
+protocol 9 reads a protocol 10 request as protocol 9. A host ignores an unknown name in `absent`
+and refuses a malformed list with `protocol_error`. `/v1/compatibility` answers above the protocol
+gate, so a client can always read the update instruction. A protocol 10 compatibility answer has the
+two lists, and a client expands it (`decodeTeamProtocolSupportExpanded`). The desktop client and the
+web client speak 10. Mobile stays on 9 until a capability after protocol 9 needs it there. The
+`agent-event-scope` message has no length limit and always sends the full list.
 
 Capabilities describe additive behavior. The client sends its capability list when it sets the event scope. The host sends optional events only when the client declared the related capability. A missing capability disables only that feature. An unknown optional event is ignored. A malformed known event closes the connection as `protocol_error` because the client cannot safely apply it.
 
@@ -640,4 +655,4 @@ that host.
 
 Team API failures use a JSON error envelope with `error` and a stable `code`. Compatibility codes are `client_update_required`, `host_update_required`, and `protocol_error`. Authentication and network failures are projected to `authentication_required` and `network_unavailable` in the desktop connection state. A confirmed compatibility or protocol error stops data-plane requests and automatic reconnect until the user selects `Retry`, restarts, or updates.
 
-Protocol support has no fixed time or release limit. Removal is an exceptional architecture decision. It requires a security issue, data-loss risk, semantics that cannot be kept, or technical cost that cannot be contained in an adapter. The decision must also include a changelog entry, update instructions, tests for old-client/new-host and new-client/old-host directions, and clear blocking UI.
+Protocol support follows the support window in the root `AGENTS.md`: the releases of the last 60 days. A protocol that no release in the window speaks can be deleted. The PR that deletes it raises the minimum protocol and, when old apps must update, the minimum app version; a CI check refuses a minimum app version that is less than 60 days old. The PR also includes a changelog entry and tests for the old-client/new-host and new-client/old-host directions.

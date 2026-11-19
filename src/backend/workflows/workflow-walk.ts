@@ -372,6 +372,33 @@ function withError(text: string, error: string | null | undefined): string {
   return `${text} Error: ${quoted}`;
 }
 
+/** The nearest completed agent on an active input path. Prefer the later step at a join. */
+export function notificationSource(
+  graph: WorkflowGraph,
+  nodeId: string,
+  latest: ReadonlyMap<string, StoredWorkflowStep>,
+) {
+  const before = incoming(graph.edges);
+  const seen = new Set([nodeId]);
+  let level = [nodeId];
+  while (level.length) {
+    const next: string[] = [];
+    let agent: StoredWorkflowStep | undefined;
+    for (const id of level) {
+      for (const edge of before.get(id) ?? []) {
+        const step = latest.get(edge.from);
+        if (!step || seen.has(edge.from) || !edgeActive(edge, step)) continue;
+        seen.add(edge.from);
+        next.push(edge.from);
+        if (step.agentId && step.deliveryId && (!agent || step.sequence > agent.sequence)) agent = step;
+      }
+    }
+    if (agent) return agent;
+    level = next;
+  }
+  return undefined;
+}
+
 function edgeActive(edge: WorkflowEdge, source: StoredWorkflowStep): boolean {
   if (source.status !== "done") return false;
   return source.kind !== "condition" || edge.branch === source.branch;

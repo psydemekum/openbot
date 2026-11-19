@@ -171,6 +171,7 @@ type TeamApiAgentMethods = Pick<
   | "listWorkspaceDirectory"
   | "sendMessage"
   | "listQueue"
+  | "listActiveQueues"
   | "acknowledgeFailedTurn"
   | "setMessageReaction"
   | "deleteConversationMessage"
@@ -455,6 +456,7 @@ export type TeamApiWorkflows = Pick<
   WorkflowsHandle,
   | "list"
   | "listWithGraphs"
+  | "notifications"
   | "get"
   | "create"
   | "rename"

@@ -2,6 +2,8 @@ import type { PartialTranslation } from "../../../message";
 import type { messages as source } from "../../en/mobile/workflow";
 
 export const messages = {
+  "mobile.workflow.inbox.title": "Workflow-Benachrichtigungen",
+  "mobile.workflow.inbox.empty": "Noch keine Workflow-Benachrichtigungen.",
   "mobile.workflow.file.format": "Format",
   "mobile.workflow.file.filename": "Dateiname",
   "mobile.workflow.file.notify": "Nach dem Speichern benachrichtigen",

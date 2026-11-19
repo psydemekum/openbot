@@ -657,6 +657,8 @@ export class BrowserHost {
   readonly #userBrowsing: BrowserUserBrowsing | null;
   readonly #downloadsRoot: string;
   readonly #statePath: string;
+  /** The state path, or the fallback file while the state path holds the file of a newer release. */
+  #stateWritePath: string;
   readonly #tabs = new Map<string, BrowserHostTab>();
   readonly #closingTabDrains = new Map<string, Fiber.Fiber<void, BrowserOperationError>>();
   readonly #listeners = new Set<(...args: BrowserHostEvents["changed"]) => void>();
@@ -785,6 +787,7 @@ export class BrowserHost {
     this.#webPreferences = browserWebPreferences(options.pagePreload);
     this.#downloadsRoot = downloadsRoot;
     this.#statePath = statePath;
+    this.#stateWritePath = statePath;
     this.#session = session.fromPartition("persist:openbot-browser", { cache: true });
     this.#recorder = new BrowserRecorder(
       downloadsRoot,
@@ -820,7 +823,8 @@ export class BrowserHost {
     this: BrowserHost,
     agents: readonly BrowserTabOwner[] = [],
   ): Effect.fn.Return<void, BrowserOperationError> {
-    const state = yield* readBrowserState(this.#statePath);
+    const { state, writePath } = yield* readBrowserState(this.#statePath);
+    this.#stateWritePath = writePath;
     if (state.tabs.length === 0) return;
 
     const tabs: BrowserHostTab[] = [];
@@ -961,6 +965,7 @@ export class BrowserHost {
     return (
       // A preview capture is not a use. An unload that starts during one waits behind it on the queue.
       tab.pendingOperations > (tab.previewCapture ? 1 : 0) ||
+      tab.opening === true ||
       tab.viewInvalidations.size > 0 ||
       tab.recording ||
       tab.secret !== undefined ||
@@ -1225,8 +1230,14 @@ export class BrowserHost {
 
       const loadGeneration = tab.loadGeneration;
       yield* Effect.gen({ self: this }, function* () {
-        // The first load of a new tab has no deadline, as with `loadURL` alone.
-        yield* navigateAndWait(tab.contents, () => tab.contents.loadURL(normalizedUrl, browserLoadOptions()), null);
+        // The first load of a new tab has no deadline, as with `loadURL` alone. The idle unload must not
+        // close the page while this wait runs: the open would fail as a closed tab (#11475).
+        tab.opening = true;
+        yield* navigateAndWait(
+          tab.contents,
+          () => tab.contents.loadURL(normalizedUrl, browserLoadOptions()),
+          null,
+        ).pipe(Effect.ensuring(Effect.sync(() => (tab.opening = false))));
         if (focus) {
           this.#focusTab(tab);
           setImmediate(() => this.#focusTab(tab));
@@ -5014,7 +5025,9 @@ export class BrowserHost {
       })),
     };
     yield* this.#persistLock.withPermit(
-      writeJsonFileAtomically(this.#statePath, state).pipe(Effect.mapError((error) => browserFailure(error.cause))),
+      writeJsonFileAtomically(this.#stateWritePath, state).pipe(
+        Effect.mapError((error) => browserFailure(error.cause)),
+      ),
     );
   });
 }

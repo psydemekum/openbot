@@ -206,6 +206,7 @@ import { queuedDeliveriesInOrder } from "../../queue-reconciliation";
 import "katex/contrib/copy-tex";
 // Copying a selection gives clean HTML, as on desktop.
 import "../../selection-copy";
+import { WORKFLOW_NOTIFICATIONS_CAPABILITY } from "@openbot/contracts/team-protocol/workflow-notifications-v1";
 import { actionToast } from "../../action-toast";
 import { desktopAnalytics } from "../../analytics";
 import { collectThreadMessageMatches, formatMessageTime, toAgentMessage } from "../../app-message-projection";
@@ -236,6 +237,7 @@ import {
 } from "../../WorkspaceOverlayViews";
 import { createUsageRefreshPoll } from "../account/usage-refresh-poll";
 import { conversationThreads } from "../agent-threads/conversation-threads";
+import { sidebarAgentThreads } from "../agent-threads/sidebar-agent-threads";
 import { type NewAgentDraft, newAgentInput } from "../agents/agent-create-input";
 import { type CreationPreference, resolveCreationModel } from "../agents/agent-creation-model";
 import { agentErrorDetails, claimErrorToast, createRetryNotices, readableAgentError } from "../agents/agent-error-text";
@@ -328,6 +330,7 @@ import {
 } from "../window/SettingsPageFrame";
 import { WindowBackdrop } from "../window/WindowBackdrop";
 import type { SettingsKind, WindowPage } from "../window/window-page-context";
+import { WorkflowNotificationBell } from "../workflows/WorkflowNotificationBell";
 import { createWorkflowMediaCredits } from "../workflows/workflow-media-credits";
 import { WebAgentSettings } from "./WebAgentSettings";
 import { WebConnectComputer } from "./WebConnectComputer";
@@ -1335,6 +1338,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
       if (online && wasOnline === false) for (const listener of hostOnlineListeners) listener();
     },
   );
+  const [inboxWorkflow, setInboxWorkflow] = createSignal<{ serverId: string; workflowId: string }>();
   const workflowHost = webWorkflowHost({
     request: () => hostRequest(),
     capabilities: () => workspace.state.capabilities,
@@ -1859,9 +1863,11 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
     return agentId ? workspace.deleteMessage(agentId, messageId) : Promise.resolve();
   };
   /** Pin and Unpin on the host. A host without `message-pins-v1` has none. */
-  const agentMessagePins = () => {
+  const messagePinsSupported = createMemo(() => workspace.state.capabilities.includes(MESSAGE_PINS_CAPABILITY));
+  // One object while the capability stays: a new object reads the pinned list again.
+  const agentMessagePins = createMemo(() => {
     const { listPinnedMessages: list, setMessagePinned: set } = workspace.runtime;
-    if (!list || !set || !workspace.state.capabilities.includes(MESSAGE_PINS_CAPABILITY)) return undefined;
+    if (!list || !set || !messagePinsSupported()) return undefined;
     return {
       list,
       set,
@@ -1870,7 +1876,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
           if (event.type === "message-pins-changed" && event.agentId === agentId) changed();
         }),
     };
-  };
+  });
   /** The Delete action of the open agent's chat. A host without `message-delete-v1` has none. */
   const agentDeleteMessageAction = () => (messageDeleteSupported() ? deleteOpenAgentMessage : undefined);
   const hostServerAuditCalls: HostServerAuditCalls = {
@@ -2407,14 +2413,20 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
       },
     );
   };
-  createEffect(
+  // The conversation changes with each message, and an effect runs again each time its key is computed.
+  // The memo compares the key, so only another agent or turn reads the waits again.
+  const waitsKey = createMemo(
     () => ({
       agentId: workspace.state.selectedId ?? null,
       turnId: workspace.conversation()?.page?.activeTurnId ?? null,
       supported: workspace.state.capabilities.includes(AGENT_WAITS_CAPABILITY),
     }),
-    ({ agentId, supported }) => loadSelectedWaits(agentId, supported),
+    {
+      equals: (before, after) =>
+        before.agentId === after.agentId && before.turnId === after.turnId && before.supported === after.supported,
+    },
   );
+  createEffect(waitsKey, ({ agentId, supported }) => loadSelectedWaits(agentId, supported));
   const visibleWaits = () => {
     const snapshot = selectedWaits();
     return snapshot && snapshot.agentId === workspace.state.selectedId ? snapshot.waits : undefined;
@@ -2677,6 +2689,34 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
     const ask = usageLimitAsk();
     const agent = conversationAgent();
     return ask && agent ? { agentId: agent.id, ask } : undefined;
+  });
+  /** The side threads under each agent row of the sidebar. */
+  const sidebarThreads = createMemo(() => {
+    const current = agentThreads();
+    if (!current) return undefined;
+    const openChat = (agentId: string) => {
+      setMobilePane("conversation");
+      void select(agentId);
+    };
+    return sidebarAgentThreads({
+      tasks: current.tasks,
+      tabs: current.tabs,
+      activeAgentId: () => (tasksOpen() || channelOpen() ? "" : (workspace.state.selectedId ?? "")),
+      waits: () => ({
+        approvals: workspace.state.approvals,
+        prompts: workspace.state.prompts,
+        takeovers: workspace.state.takeovers,
+      }),
+      // The tab is written first, so the chat opens on it.
+      openThread: (agentId, threadId) => {
+        current.tabs.open(agentId, threadId);
+        openChat(agentId);
+      },
+      onNew: (agentId) => {
+        openChat(agentId);
+        current.tabs.startNew(agentId);
+      },
+    });
   });
   /** The selected agent's threads. A host without side threads shows only the agent's own chat. */
   const threads = createMemo((): ConversationThreads | undefined => {
@@ -3237,6 +3277,11 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                             <Loading>
                               <WorkflowsCanvas
                                 host={workflowHost}
+                                request={{
+                                  workflowId: () =>
+                                    inboxWorkflow()?.serverId === serverId ? inboxWorkflow()?.workflowId : undefined,
+                                  taken: () => setInboxWorkflow(undefined),
+                                }}
                                 serverId={serverId}
                                 admin={canAdministerServer(workspace.state.host?.role)}
                                 agents={workspace.profiles()}
@@ -3354,6 +3399,35 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                           !pausedAgentIds().has(agent.id) && (workspace.state.reads[agent.id]?.unreadCount ?? 0) > 0,
                       ) || channels.hasUnread()
                     }
+                    workflowBell={
+                      <Show
+                        when={
+                          workspace.state.status === "online" &&
+                          workspace.state.capabilities.includes(WORKFLOW_NOTIFICATIONS_CAPABILITY) &&
+                          workspace.state.host?.hostId
+                        }
+                        keyed
+                      >
+                        {(id) => (
+                          <WorkflowNotificationBell
+                            host={workflowHost}
+                            onOpen={(notice) => {
+                              setMobilePane("conversation");
+                              if (
+                                notice.chat &&
+                                workspace.profiles().some((agent) => agent.id === notice.chat?.agentId)
+                              ) {
+                                agentThreads()?.tabs.open(notice.chat.agentId, notice.chat.taskId ?? "main");
+                                void select(notice.chat.agentId);
+                              } else {
+                                setInboxWorkflow({ serverId: id, workflowId: notice.workflowId });
+                                void openHostPage(id, "workflows", null);
+                              }
+                            }}
+                          />
+                        )}
+                      </Show>
+                    }
                     view={layout.sidebarView()}
                     serverName={workspace.state.host?.name ?? "OpenBot"}
                     serverUpdate={(() => {
@@ -3372,6 +3446,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                     }}
                     agents={workspace.profiles()}
                     activeAgentId={tasksOpen() || channelOpen() ? "" : (workspace.state.selectedId ?? "")}
+                    agentThreads={sidebarThreads()}
                     people={[]}
                     directThreads={[]}
                     activeDirectMemberId={null}

@@ -75,11 +75,13 @@
     /* The width of Back and Forward, of the sidebar toggle, and of the server update button, each with
      * the 3px gap after it. The web client has no Back and Forward. */
     --top-row-history-width: 0px;
+    --top-row-bell-width: 0px;
     --top-row-toggle-width: 0px;
     --top-row-update-width: 0px;
     --top-row-tabs-start: calc(
       var(--top-row-controls-start) +
       var(--top-row-history-width) +
+      var(--top-row-bell-width) +
       var(--top-row-toggle-width) +
       var(--top-row-update-width) +
       var(--openbot-space-2) -
@@ -101,6 +103,10 @@
 
   .app-window > .window-rail:not([hidden]) ~ .app-frame-edge:has(> .sidebar .sidebar-history-button) {
     --top-row-history-width: calc(2 * (var(--openbot-control-sm) + 3px));
+  }
+
+  .app-window > .window-rail:not([hidden]) ~ .app-frame-edge:has(> .sidebar .workflow-bell) {
+    --top-row-bell-width: calc(var(--openbot-control-sm) + 3px);
   }
 
   /* Only the agents page has a sidebar to toggle. The Tasks page is in the frame of the agents page. */
@@ -888,8 +894,8 @@
     visibility: hidden;
   }
 
-  /* New agent and New section add to the agent list, so the button shows only on the agents page. */
-  .app-frame-edge:not([data-window-page-kind="agents"]) > .sidebar .sidebar-new-button {
+  /* New and the filter act on the agent list, so the buttons show only on the agents page. */
+  .app-frame-edge:not([data-window-page-kind="agents"]) > .sidebar :is(.sidebar-new-button, .sidebar-filter-button) {
     display: none;
   }
 

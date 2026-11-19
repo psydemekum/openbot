@@ -2,6 +2,8 @@ import type { PartialTranslation } from "../../message";
 import type { messages as source } from "../en/workflow";
 
 export const messages = {
+  "workflow.inbox.title": "워크플로 알림",
+  "workflow.inbox.empty": "아직 워크플로 알림이 없습니다.",
   "workflow.board.port.text": "텍스트",
   "workflow.board.port.image": "이미지",
   "workflow.board.port.file": "파일",

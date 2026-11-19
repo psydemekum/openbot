@@ -6,6 +6,10 @@
 // both, and a price for a step, through `workflows-media-catalog-v1`.
 
 import {
+  WORKFLOW_NOTIFICATIONS_CAPABILITY,
+  WORKFLOW_NOTIFICATIONS_ROUTE,
+} from "@openbot/contracts/team-protocol/workflow-notifications-v1";
+import {
   WORKFLOWS_GITHUB_CAPABILITY,
   WORKFLOWS_GITHUB_ROUTES,
 } from "@openbot/contracts/team-protocol/workflows-github-v1";
@@ -39,6 +43,7 @@ import {
   decodeRemoteWorkflowMediaCredits,
   decodeRemoteWorkflowMediaPrice,
   decodeRemoteWorkflowMediaProviders,
+  decodeRemoteWorkflowNotifications,
   decodeRemoteWorkflowPicture,
   decodeRemoteWorkflowRunDetail,
   decodeRemoteWorkflowRunPage,
@@ -84,6 +89,7 @@ interface WorkflowRemoteServers {
     serverId: string,
     capability:
       | typeof WORKFLOWS_CAPABILITY
+      | typeof WORKFLOW_NOTIFICATIONS_CAPABILITY
       | typeof WORKFLOWS_GITHUB_CAPABILITY
       | typeof WORKFLOWS_MEDIA_CAPABILITY
       | typeof WORKFLOWS_SUNRA_CAPABILITY
@@ -125,6 +131,20 @@ export function workflowIpcHandlers({
   }
   return {
     workflows: {
+      notifications: scopedQueryHandler({
+        local: async () => {
+          const known = new Set((await runCauseEffect(workflows.list())).map((workflow) => workflow.id));
+          return workflows
+            .notifications()
+            .filter(({ notice }) => known.has(notice.workflowId))
+            .map(({ notice }) => notice);
+        },
+        remote: (serverId) => {
+          if (!remoteServers.supportsCapability(serverId, WORKFLOW_NOTIFICATIONS_CAPABILITY))
+            throw new Error(sourceText("error.workflow.serverTooOld"));
+          return remote(serverId, WORKFLOW_NOTIFICATIONS_ROUTE, decodeRemoteWorkflowNotifications, {});
+        },
+      }),
       list: scopedQueryHandler({
         local: () => runCauseEffect(workflows.list()),
         remote: (serverId) => remote(serverId, WORKFLOWS_ROUTES.list, decodeRemoteWorkflowList, {}),

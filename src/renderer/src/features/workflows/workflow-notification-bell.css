@@ -1,0 +1,45 @@
+.workflow-bell svg {
+  width: var(--openbot-space-4);
+  height: var(--openbot-space-4);
+}
+.workflow-bell-dot {
+  position: absolute;
+  inset-block-start: var(--openbot-space-1);
+  inset-inline-end: var(--openbot-space-1);
+  width: var(--openbot-space-1-5);
+  height: var(--openbot-space-1-5);
+  background: var(--openbot-text-primary);
+  border-radius: var(--openbot-radius-pill);
+}
+.workflow-notification-list {
+  width: min(22rem, 92vw);
+  max-height: min(28rem, 70vh);
+  overflow-y: auto;
+  padding: var(--openbot-space-2);
+}
+.workflow-notification-list h2,
+.workflow-notification-list p {
+  margin: var(--openbot-space-2);
+  font-size: inherit;
+}
+.workflow-notification-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-notification-item {
+  display: grid;
+  justify-content: stretch;
+  justify-items: start;
+  width: 100%;
+  height: auto;
+  padding: var(--openbot-space-2);
+  gap: var(--openbot-space-1);
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.workflow-notification-item time {
+  font-size: var(--openbot-text-sm);
+  color: var(--openbot-text-muted);
+}

@@ -15,6 +15,7 @@ import {
 import { AGENT_ACCESS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-access-v1";
 import { ROUTINE_RESULTS_CAPABILITY } from "@openbot/contracts/team-protocol/routine-results-v1";
 import { decodeTeamProtocolV2Json, TEAM_PROTOCOL_V2_MAX_FILE_BYTES } from "@openbot/contracts/team-protocol/v2";
+import { WORKFLOW_NOTIFICATIONS_ROUTE } from "@openbot/contracts/team-protocol/workflow-notifications-v1";
 import { WORKFLOWS_CHANNELS_CAPABILITY } from "@openbot/contracts/team-protocol/workflows-channels-v1";
 import { WORKFLOWS_CHATS_CAPABILITY } from "@openbot/contracts/team-protocol/workflows-chats-v1";
 import {
@@ -67,6 +68,7 @@ import {
   decodeRemoteWorkflowMediaCredits,
   decodeRemoteWorkflowMediaPrice,
   decodeRemoteWorkflowMediaProviders,
+  decodeRemoteWorkflowNotifications,
   decodeRemoteWorkflowPicture,
   decodeRemoteWorkflowRunDetail,
   decodeRemoteWorkflowRunPage,
@@ -208,6 +210,7 @@ export function webWorkflowHost(options: WebWorkflowHostOptions): WorkflowHost {
         return { ...sunra, ...higgsfield };
       },
       // A host without `workflows-media-catalog-v1` runs only the fixed models and gives no quote.
+      notifications: () => post(WORKFLOW_NOTIFICATIONS_ROUTE, decodeRemoteWorkflowNotifications, {}),
       mediaCatalog: async () =>
         has(WORKFLOWS_MEDIA_CATALOG_CAPABILITY)
           ? post(WORKFLOWS_MEDIA_CATALOG_ROUTES.catalog, decodeRemoteWorkflowMediaCatalog, {})

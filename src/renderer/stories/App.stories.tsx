@@ -81,6 +81,36 @@ export const SlowRemoteServer: Story = {
   render: () => <SlowRemotePlayground />,
 };
 
+export const WorkflowNotifications: Story = {
+  render: () => (
+    <SidebarStatePlayground
+      compact={false}
+      options={{
+        workflowNotifications: [
+          {
+            id: "notice-2",
+            workflowId: "weekly",
+            title: "Weekly report",
+            text: "The report is ready.",
+            at: "2026-11-17T16:30:00Z",
+            kind: "output",
+            chat: { agentId: "research", taskId: null },
+          },
+          {
+            id: "notice-1",
+            workflowId: "digest",
+            title: "Morning digest",
+            text: "The digest is ready.",
+            at: "2026-11-17T08:00:00Z",
+            kind: "output",
+            chat: { agentId: "sales", taskId: null },
+          },
+        ],
+      }}
+    />
+  ),
+};
+
 export const CompactSidebar: Story = {
   render: () => <SidebarStatePlayground compact={true} />,
 };

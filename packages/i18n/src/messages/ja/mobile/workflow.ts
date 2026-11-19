@@ -2,6 +2,8 @@ import type { PartialTranslation } from "../../../message";
 import type { messages as source } from "../../en/mobile/workflow";
 
 export const messages = {
+  "mobile.workflow.inbox.title": "ワークフローの通知",
+  "mobile.workflow.inbox.empty": "ワークフローの通知はまだありません。",
   "mobile.workflow.unsupported":
     "スマートフォンでワークフローを使うには、このサーバーの OpenBot をアップデートしてください。",
   "mobile.workflow.offline": "サーバーはオフラインです。接続するとワークフローが表示されます。",

@@ -2,6 +2,8 @@ import type { ChatWindowTarget } from "@openbot/contracts/ipc";
 import { AGENT_NOTIFICATION_LEVELS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-notification-levels-v1";
 import { CONVERSATION_UNREAD_FROM_CAPABILITY } from "@openbot/contracts/team-protocol/conversation-unread-from-v1";
 import { AGENT_HIDDEN_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import { WORKFLOW_NOTIFICATIONS_CAPABILITY } from "@openbot/contracts/team-protocol/workflow-notifications-v1";
+import { MAIN_THREAD_ID } from "@openbot/ui/features/conversation/threads/thread-types";
 import { Sidebar } from "@openbot/ui/features/sidebar/Sidebar";
 import { SidebarCommunityCard } from "@openbot/ui/features/sidebar/SidebarCommunityCard";
 import { SidebarMobileAppCard } from "@openbot/ui/features/sidebar/SidebarMobileAppCard";
@@ -18,6 +20,8 @@ import { usePlatform } from "../../platform";
 import { useTurns } from "../../turns";
 import { useAgentTasks } from "../agent-tasks/agent-tasks-context";
 import { useAgentThreads } from "../agent-threads/agent-threads-context";
+import type { ThreadWaits } from "../agent-threads/conversation-threads";
+import { sidebarAgentThreads } from "../agent-threads/sidebar-agent-threads";
 import { useAgentActions } from "../agents/agent-actions";
 import { createAgentActivity } from "../agents/agent-activity";
 import { useAgents } from "../agents/agents-context";
@@ -33,6 +37,9 @@ import { useServers } from "../servers/servers-context";
 import { useSettings } from "../settings/settings-context";
 import { usePresence } from "../team/team-context";
 import { SidebarUpdateIsland } from "../updates/SidebarUpdateIsland";
+import { useWindowPage } from "../window/window-page-context";
+import { WorkflowNotificationBell } from "../workflows/WorkflowNotificationBell";
+import { desktopWorkflowHost } from "../workflows/workflows-port";
 import { createCommunityCardVisibility } from "./community-card";
 import { DevWorktreeLabel } from "./DevWorktreeLabel";
 import { createSidebarAlertCards, SidebarAlertCards } from "./SidebarAlertCards";
@@ -110,6 +117,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
   const { selectAgent, selectDirectMember, setGlobalSearchVisibility, chatHistory } = useNavigation();
   const agentTasks = useAgentTasks();
   const agentThreads = useAgentThreads();
+  const windowPage = useWindowPage();
   // The agent menu offers Mark read for these. The count also holds the side threads, as the badge does.
   const unreadAgentIds = createMemo(
     () => new Set(agentList().flatMap((agent) => ((agentUnreadReplies()[agent.id] ?? 0) > 0 ? [agent.id] : []))),
@@ -190,15 +198,29 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
 
   /* A wait in a channel thread goes to the channel instead. Selecting the channel opens the view
    * that answers it. */
-  const channelWaits = createMemo(() => {
+  const waits = createMemo((): ThreadWaits => {
     const prompts = Object.values(pendingPrompts());
-    return sidebarChannelWaits({
-      channels: visibleChannels(),
+    return {
       prompts: prompts.flatMap((event) => (event?.type === "prompt" ? [event] : [])),
       takeovers: prompts.flatMap((event) => (event?.type === "browser-takeover-requested" ? [event.request] : [])),
       approvals: approvals(),
-    });
+    };
   });
+  const channelWaits = createMemo(() => sidebarChannelWaits({ channels: visibleChannels(), ...waits() }));
+  const activeAgentId = () => (activeDirectMember() || channels.state.selectedId ? "" : (activeAgent()?.id ?? ""));
+  /** The side threads under each agent row. A chat window shows one agent, so it has none. */
+  const sideThreads = createMemo(() =>
+    platform.chatWindow
+      ? undefined
+      : sidebarAgentThreads({
+          tasks: agentTasks,
+          tabs: agentThreads,
+          activeAgentId,
+          waits,
+          openThread: (agentId, threadId) => void selectAgent(agentId, threadId),
+          onNew: newAgentThread(),
+        }),
+  );
 
   return (
     <>
@@ -240,6 +262,22 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
           const badge = server ? serverUpdateBadge(server.id) : null;
           return server && badge ? { ...badge, onOpen: () => void showServerUpdate(server.id) } : undefined;
         })()}
+        workflowBell={
+          <Show when={activeServerSupportsCapability(WORKFLOW_NOTIFICATIONS_CAPABILITY) && activeServerId()} keyed>
+            {(id) => (
+              <WorkflowNotificationBell
+                host={desktopWorkflowHost(id, activeServer)}
+                onOpen={(notice) => {
+                  if (notice.chat && agentList().some((agent) => agent.id === notice.chat?.agentId)) {
+                    selectAgent(notice.chat.agentId, notice.chat.taskId ?? MAIN_THREAD_ID);
+                  } else {
+                    windowPage.openWorkflows(null, { serverId: id, workflowId: notice.workflowId });
+                  }
+                }}
+              />
+            )}
+          </Show>
+        }
         topbarDetail={<DevWorktreeLabel />}
         serverMenu={
           platform.appInfo()
@@ -258,7 +296,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
             : undefined
         }
         agents={agentList()}
-        activeAgentId={activeDirectMember() || channels.state.selectedId ? "" : (activeAgent()?.id ?? "")}
+        activeAgentId={activeAgentId()}
         showPeople={props.peopleEnabled}
         people={directPeople()}
         directThreads={directThreads()}
@@ -312,6 +350,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
         onHideAgent={hideAllowed() ? (agentId) => void setAgentHiddenByUser(agentId, true) : undefined}
         onRestoreAgent={hideAllowed() ? (agentId) => void setAgentHiddenByUser(agentId, false) : undefined}
         onNewAgentThread={newAgentThread()}
+        agentThreads={sideThreads()}
         onOpenAgentWindow={
           platform.landingPreview
             ? undefined
