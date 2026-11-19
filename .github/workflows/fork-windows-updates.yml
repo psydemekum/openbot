@@ -124,6 +124,15 @@ jobs:
           bun scripts/workflow-team-api-e2e.ts --files
           bun run test:desktop --maxWorkers=1 src/renderer/src/features/workflows/WorkflowNotificationBell.test.tsx
 
+      - name: Build and test the pinned Memdoor companion
+        if: steps.release.outputs.build == 'true' && hashFiles('scripts/prepare-memdoor.ts') != ''
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          go version
+          bun scripts/prepare-memdoor.ts
+          bun scripts/memdoor-team-e2e.ts
+
       - name: Build the Windows application
         if: steps.release.outputs.build == 'true'
         shell: pwsh
@@ -188,6 +197,13 @@ jobs:
           $config = Get-Content dist/win-unpacked/resources/app-update.yml -Raw
           if ($config -notmatch '(?m)^owner: psydemekum\r?$' -or $config -notmatch '(?m)^repo: openbot\r?$') {
             throw 'The packaged application does not use the fork update feed.'
+          }
+          if (Test-Path scripts/prepare-memdoor.ts) {
+            foreach ($file in @('memdoor.exe', 'LICENSE', 'NOTICE')) {
+              if (-not (Test-Path -LiteralPath "dist/win-unpacked/resources/memdoor/$file" -PathType Leaf)) {
+                throw "The packaged application is missing Memdoor's $file."
+              }
+            }
           }
 
       - name: Verify upgrade and profile migration
