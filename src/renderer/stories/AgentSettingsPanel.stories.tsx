@@ -181,9 +181,11 @@ export const MemdoorTeam: Story = {
       <main class="agent-memories-story-stage">
         <AgentSettingsPanel
           {...args}
-          links={
+          brainSettings={
             <MemdoorTeamForm
               agentId={MEMDOOR_AGENT_ID}
+              agentStatus={args.agentStatus}
+              modelOptions={args.modelOptions}
               read={async () => settings}
               save={async ({ teamModel, decisionModel, roles, apiKey }) => {
                 settings = {

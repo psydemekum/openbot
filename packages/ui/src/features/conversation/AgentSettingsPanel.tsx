@@ -184,6 +184,7 @@ export interface AgentSettingsPanelProps {
   preferredWidth?: (() => number) | undefined;
   reveal?: AgentSettingReveal | null | undefined;
   links?: JSX.Element;
+  brainSettings?: JSX.Element;
   detailOpen?: boolean;
   children?: JSX.Element;
   onUpdateAgent: (agentId: string, updates: Omit<UpdateAgentInput, "agentId">) => Promise<void>;
@@ -1275,7 +1276,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                 />
                 <InstructionsLimit text={draft.fields.description} tooLong="agent.description.tooLong" />
               </SettingsField>
-              <Show when={props.agent.id !== MEMDOOR_AGENT_ID}>
+              <Show when={props.agent.id !== MEMDOOR_AGENT_ID} fallback={props.brainSettings}>
                 <SettingsLinkGroup inset class="agent-settings-runtime-rows" title={t("agentSettings.groups.brain")}>
                   <ProviderModelPicker
                     variant="field"

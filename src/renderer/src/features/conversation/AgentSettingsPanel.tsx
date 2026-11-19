@@ -509,18 +509,22 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
         })
       }
       detailOpen={draft.routines.open || draft.files.open || draft.memories.open || draft.instructions.open}
+      brainSettings={
+        <Show when={memdoorTeam()}>
+          {(api) => (
+            <MemdoorTeamSettings
+              agentId={props.agent.id}
+              agentStatus={props.agentStatus}
+              modelOptions={props.modelOptions}
+              read={api().read}
+              save={api().save}
+              allowApiKey={props.localHost === true && !props.remoteClient}
+            />
+          )}
+        </Show>
+      }
       links={
         <>
-          <Show when={memdoorTeam()}>
-            {(api) => (
-              <MemdoorTeamSettings
-                agentId={props.agent.id}
-                read={api().read}
-                save={api().save}
-                allowApiKey={props.localHost === true && !props.remoteClient}
-              />
-            )}
-          </Show>
           <Show when={sessionSettings()}>
             {(api) => (
               <AgentSessionSettings

@@ -78,6 +78,7 @@ interface ProviderModelPickerProps {
   value: AgentModelId;
   modelOptions: ClientAgentModelOption[];
   agentStatus: AgentStatus;
+  onlyProvider?: AgentProviderId;
   variant?: "pill" | "field";
   ariaLabel?: string;
   label?: string;
@@ -171,7 +172,11 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
   let popover: HTMLElement | undefined;
 
   const visibleProviders = createMemo(() =>
-    PROVIDERS.filter((provider) => provider === CUSTOM_RAIL || !providerTurnedOff(props.agentStatus, provider)),
+    PROVIDERS.filter(
+      (provider) =>
+        (props.onlyProvider === undefined || provider === props.onlyProvider) &&
+        (provider === CUSTOM_RAIL || !providerTurnedOff(props.agentStatus, provider)),
+    ),
   );
   const railPool = (rail: RailId) => {
     if (rail === CUSTOM_RAIL) return null;

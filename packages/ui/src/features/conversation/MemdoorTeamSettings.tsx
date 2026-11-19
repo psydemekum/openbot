@@ -1,7 +1,9 @@
+import type { AgentStatus, ClientAgentModelOption } from "@openbot/contracts/ipc";
 import {
   isMemdoorTeamConfig,
   isSaveMemdoorTeamSettings,
   MEMDOOR_EFFORTS,
+  MEMDOOR_MODEL_PATTERN,
   MEMDOOR_PROMPT_LIMIT,
   MEMDOOR_ROLE_IDS,
   type MemdoorRole,
@@ -11,12 +13,12 @@ import {
   type MemdoorTeamSettings as Settings,
 } from "@openbot/contracts/ipc-memdoor";
 import { Button, Field, Input, NativeSelect, Text, Textarea } from "@openbot/ui";
+import { ProviderModelPicker } from "@openbot/ui/components/ProviderModelPicker";
 import { SettingsLinkGroup } from "@openbot/ui/components/SettingsPanel";
-import { createEffect, createStore, For, Show } from "solid-js";
+import { createEffect, createMemo, createStore, For, Show } from "solid-js";
 import { useText } from "../../text";
 
 const EMPTY_ROLE: MemdoorRole = { model: "", effort: "", prompt: "" };
-const MODEL_MAX_LENGTH = 84;
 
 const ROLE_LABEL = {
   reproduce: "agentSettings.memdoor.role.reproduce",
@@ -79,6 +81,8 @@ function draftFrom(settings: Settings): MemdoorTeamConfig {
 
 export function MemdoorTeamSettings(props: {
   agentId: string;
+  agentStatus: AgentStatus;
+  modelOptions: ClientAgentModelOption[];
   read: () => Promise<Settings>;
   save: (input: SaveMemdoorTeamSettings) => Promise<Settings>;
   allowApiKey?: boolean;
@@ -88,6 +92,29 @@ export function MemdoorTeamSettings(props: {
   let generation = 0;
   const busy = () => state.pending !== null;
   const hasChanges = () => state.dirty || (props.allowApiKey === true && state.apiKey.trim() !== "");
+  const models = createMemo(() =>
+    props.modelOptions.filter((model) => model.provider === "codex" && MEMDOOR_MODEL_PATTERN.test(model.id)),
+  );
+  // Memdoor sends requests with its own OpenAI credential, independent of the Codex CLI session.
+  const modelStatus = createMemo<AgentStatus>(() => ({ ...props.agentStatus, phase: "ready", providers: undefined }));
+
+  function ModelSetting(choice: { label: string; value: string; select: (id: string) => void }) {
+    return (
+      <ProviderModelPicker
+        variant="field"
+        onlyProvider="codex"
+        provider="codex"
+        value={choice.value}
+        label={choice.label}
+        ariaLabel={choice.label}
+        modelOptions={models()}
+        agentStatus={modelStatus()}
+        disabled={busy() || models().length === 0}
+        disabledReason={t("agentSettings.memdoor.noModels")}
+        onChange={choice.select}
+      />
+    );
+  }
 
   async function load(read: typeof props.read, current: number) {
     setState((s) => {
@@ -243,30 +270,38 @@ export function MemdoorTeamSettings(props: {
       <Show when={state.draft}>
         {(draft) => (
           <>
-            <Field label={t("agentSettings.memdoor.teamModel")} required>
-              <Input
+            <SettingsLinkGroup inset class="agent-settings-runtime-rows" title={t("agentSettings.groups.brain")}>
+              <ModelSetting
+                label={t("agentSettings.memdoor.teamModel")}
                 value={draft().teamModel}
-                maxlength={MODEL_MAX_LENGTH}
-                disabled={busy()}
-                onValueChange={(value) =>
+                select={(value) =>
                   editDraft((next) => {
                     next.teamModel = value;
                   })
                 }
               />
-            </Field>
-            <Field label={t("agentSettings.memdoor.decisionModel")} required>
-              <Input
+              <ModelSetting
+                label={t("agentSettings.memdoor.decisionModel")}
                 value={draft().decisionModel}
-                maxlength={MODEL_MAX_LENGTH}
-                disabled={busy()}
-                onValueChange={(value) =>
+                select={(value) =>
                   editDraft((next) => {
                     next.decisionModel = value;
                   })
                 }
               />
-            </Field>
+              <For each={MEMDOOR_ROLE_IDS}>
+                {(id) => (
+                  <ModelSetting
+                    label={t(ROLE_LABEL[id])}
+                    value={draft().roles[id]?.model || draft().teamModel}
+                    select={(model) => editRole(id, { model })}
+                  />
+                )}
+              </For>
+            </SettingsLinkGroup>
+            <Show when={models().length === 0}>
+              <Text tone="muted">{t("agentSettings.memdoor.noModels")}</Text>
+            </Show>
             <Show when={props.allowApiKey}>
               <Field label={t("agentSettings.memdoor.newKey")} description={t("agentSettings.memdoor.keepKey")}>
                 <Input
@@ -285,22 +320,24 @@ export function MemdoorTeamSettings(props: {
                 />
               </Field>
             </Show>
-            <For each={MEMDOOR_ROLE_IDS}>
-              {(id) => {
-                const role = () => draft().roles[id] ?? EMPTY_ROLE;
-                return (
-                  <details>
-                    <summary class="cursor-pointer py-1">{t(ROLE_LABEL[id])}</summary>
-                    <SettingsLinkGroup class="agent-settings-page">
-                      <Field label={t("agentSettings.memdoor.roleModel")}>
-                        <Input
-                          value={role().model}
-                          placeholder={t("agentSettings.memdoor.inheritModel")}
-                          maxlength={MODEL_MAX_LENGTH}
+            <details>
+              <summary class="cursor-pointer py-1">{t("agentSettings.memdoor.roleOptions")}</summary>
+              <For each={MEMDOOR_ROLE_IDS}>
+                {(id) => {
+                  const role = () => draft().roles[id] ?? EMPTY_ROLE;
+                  return (
+                    <SettingsLinkGroup class="agent-settings-page" title={t(ROLE_LABEL[id])}>
+                      <Show when={role().model}>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
                           disabled={busy()}
-                          onValueChange={(model) => editRole(id, { model })}
-                        />
-                      </Field>
+                          onClick={() => editRole(id, { model: "" })}
+                        >
+                          {t("agentSettings.memdoor.inheritModel")}
+                        </Button>
+                      </Show>
                       <Field label={t("agentSettings.memdoor.roleEffort")}>
                         <NativeSelect
                           value={role().effort}
@@ -325,10 +362,10 @@ export function MemdoorTeamSettings(props: {
                         />
                       </Field>
                     </SettingsLinkGroup>
-                  </details>
-                );
-              }}
-            </For>
+                  );
+                }}
+              </For>
+            </details>
             <Button type="button" size="sm" onClick={() => void save()} disabled={busy() || !hasChanges()}>
               {state.pending === "saving" ? t("common.saving") : t("common.save")}
             </Button>

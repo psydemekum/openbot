@@ -1,8 +1,11 @@
 # Memdoor in OpenBot
 
 The Windows fork includes one **Multi-Agent** backed by Memdoor's built-in `team-solve` workflow.
-Select it in a chat or in an OpenBot workflow agent step. Use **Agent settings → Memdoor team**
-to change the models and to add a model, reasoning effort or instructions for any of the ten roles.
+Select it in a chat or in an OpenBot workflow agent step. Under **Agent settings → Brain**,
+choose the team model, the decision model and the model for each of the ten internal roles.
+The standard picker lists compatible OpenAI models from OpenBot. A role uses the team model until
+you choose a different model. Use **Role instructions and reasoning** to edit overrides or restore
+the team model for a role.
 
 The defaults are `gpt-6.2-sol` for the team and `gpt-6-luna` for decisions. The executing host
 tries the dedicated key from the local Memdoor settings first, then the official OpenAI key
