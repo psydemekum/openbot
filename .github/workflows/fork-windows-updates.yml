@@ -116,12 +116,13 @@ jobs:
         if: steps.release.outputs.build == 'true'
         uses: ./.github/actions/setup-bun
 
-      - name: Test workflow file output
+      - name: Test workflow files and notification navigation
         if: steps.release.outputs.build == 'true'
         shell: bash
         run: |
           bun scripts/workflow-file-output-e2e.ts
           bun scripts/workflow-team-api-e2e.ts --files
+          bun run test:desktop --maxWorkers=1 src/renderer/src/features/workflows/WorkflowNotificationBell.test.tsx
 
       - name: Build the Windows application
         if: steps.release.outputs.build == 'true'
@@ -243,7 +244,7 @@ jobs:
             }
           } else {
             $title = "OpenBot Fork $env:FORK_VERSION (Windows x64)"
-            $notes = "Based on OpenBot $env:UPSTREAM_TAG. Includes workflow file export as text, Markdown and HTML."
+            $notes = "Based on OpenBot $env:UPSTREAM_TAG. Includes workflow file export as text, Markdown and HTML, and a notification bell that opens the related chat."
             gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --target $commit --title $title --notes $notes
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
