@@ -7,6 +7,7 @@ import {
   type AgentSummary,
   CHANNEL_RESUME_ITEM_TYPE,
 } from "@openbot/contracts/ipc";
+import { MEMDOOR_AGENT_ID } from "@openbot/contracts/ipc-memdoor";
 import { isFixedSourceText, matchingSourceKeys, sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
 import { classifyUserError } from "@openbot/user-errors";
@@ -39,7 +40,7 @@ import {
   type TagReferenceSource,
 } from "./delivery-content";
 import type { DuplicationGate } from "./duplication-gate";
-import { handoffHasHistory } from "./handoff-history";
+import { handoffHasHistory, withConversationHistory } from "./handoff-history";
 import type { LiveVoiceRelayed } from "./live-voice";
 import type { MailboxSync } from "./mailbox-sync";
 import type { MemoryHold } from "./memory-hold";
@@ -827,8 +828,9 @@ export class DrainScheduler {
           this.#mailboxSync.emitQueue(agent.id);
           return;
         }
+        const includeChatHistory = agent.id !== MEMDOOR_AGENT_ID || this.#routines.runForDelivery(delivery.id) !== null;
         routineThreadId = yield* this.#threads
-          .startRoutineThread(agent, client, execution?.threadId)
+          .startRoutineThread(agent, client, execution?.threadId, includeChatHistory)
           .pipe(toDeliveryStartFailed);
       }
       let threadId =
@@ -894,8 +896,7 @@ export class DrainScheduler {
       const delta = shortened?.delta(delivery.id);
       const deltaInput = delta ? promptInput(delta.text) : null;
       const sentHandoffs = new Map<string, string>();
-      const inputForThread = (providerThreadId: string) => {
-        const handoff = this.#threads.consumePendingHandoff(providerThreadId);
+      const inputForThread = (providerThreadId: string, handoff: string | undefined) => {
         const input =
           deltaInput && shortened?.sendsDelta(delivery.id, providerThreadId)
             ? deltaInput
@@ -903,7 +904,6 @@ export class DrainScheduler {
               ? restatedContinuationInput(promptInput(execution?.text), planNote)
               : completeInput;
         if (!handoff) return input;
-        sentHandoffs.set(providerThreadId, handoff);
         return input.map((item, index) =>
           index === 0 && item.type === "text"
             ? { ...item, text: `${handoff}${CURRENT_MESSAGE_SEPARATOR}${item.text}` }
@@ -942,6 +942,18 @@ export class DrainScheduler {
       const startTurn = (providerThreadId: string) =>
         Effect.gen({ self: this }, function* () {
           yield* drainStep(requireServedModel);
+          const pending = this.#threads.consumePendingHandoff(providerThreadId);
+          if (pending) sentHandoffs.set(providerThreadId, pending);
+          const needsHistory =
+            agent.id === MEMDOOR_AGENT_ID &&
+            delivery.sender.kind === "user" &&
+            !shortened &&
+            (!pending || !handoffHasHistory(pending));
+          const history = needsHistory
+            ? yield* this.#threads
+                .buildProviderHandoff(agent.id, this.#conversation.publicThreadId(agent.id, providerThreadId))
+                .pipe(toDeliveryStartFailed)
+            : null;
           return yield* this.#threads
             .requestWithArchivedThreadRecovery(
               agent,
@@ -960,7 +972,7 @@ export class DrainScheduler {
                   : {}),
                 answerOptional:
                   delivery.sender.kind === "agent" && delivery.expectsReply === false && !delivery.replyToMessageId,
-                input: inputForThread(providerThreadId),
+                input: inputForThread(providerThreadId, history ? withConversationHistory(history, pending) : pending),
                 cwd: agent.workspacePath,
                 runtimeWorkspaceRoots: workspaceWritableRoots(agent, this.#store.sharedRoot),
                 approvalPolicy: "on-request",

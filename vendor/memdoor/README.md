@@ -23,3 +23,12 @@ applies `openbot.patch`, and copies the binary and its Apache 2.0 license and no
 
 Run `bun scripts/memdoor-team-e2e.ts` after building the companion. This check uses test keys and
 exercises the packaged entry point with the key removed, without making OpenAI requests.
+
+Run `bun scripts/memdoor-conversation-e2e.ts` to check chat history, restart and workflow isolation
+with a local ACP fixture. To check live delivery, start a signed-in test desktop with a configured
+OpenAI key and loopback CDP enabled. Use a new directory under the system temp directory, its
+`profile` child as the desktop profile, and its `home` child as the test user's home.
+Run `bun scripts/memdoor-delivery-live-e2e.ts <CDP port> <temporary directory>`. It sends one
+chat request and one workflow request to the real model. It reads the final assistant message,
+compares the workflow agent's answer with the text file produced by the following step, and
+writes the results to `.openbot-build/memdoor-delivery-live/report.json`.

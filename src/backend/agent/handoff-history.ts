@@ -237,6 +237,11 @@ export function handoffHasHistory(handoff: string): boolean {
   return packet && history !== HANDOFF_START && history !== NEW_CHAT_ONLY_HISTORY;
 }
 
+export function withConversationHistory(history: string, pending: string | undefined): string {
+  const { digests } = handoffParts(pending);
+  return digests.length ? handoffPacket(history.slice(0, -HANDOFF_PACKET_END.length).trimEnd(), digests) : history;
+}
+
 const HANDOFF_PACKET_END = `\n${HANDOFF_END}`;
 
 function handoffParts(handoff: string | undefined): { packet: boolean; history: string; digests: string[] } {

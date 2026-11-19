@@ -48,16 +48,17 @@ index 866af1a..39594cb 100644
  // option a choice; the editor's cancel is "".
 diff --git a/cmd/cli/cmd/acp_openbot_team.go b/cmd/cli/cmd/acp_openbot_team.go
 new file mode 100644
-index 0000000..d2076fe
+index 0000000..ad754b9
 --- /dev/null
 +++ b/cmd/cli/cmd/acp_openbot_team.go
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,366 @@
 +package cmd
 +
 +import (
 +	"context"
 +	"errors"
 +	"fmt"
++	"io"
 +	"net"
 +	"os"
 +	"os/exec"
@@ -66,6 +67,8 @@ index 0000000..d2076fe
 +	"strings"
 +	"sync"
 +	"time"
++	"unicode/utf16"
++	"unicode/utf8"
 +
 +	"github.com/coder/acp-go-sdk"
 +	"memdoor/gateway"
@@ -190,10 +193,11 @@ index 0000000..d2076fe
 +	if err := ctx.Err(); err != nil {
 +		return err
 +	}
++	partition := "openbot-" + randomHex(16)
 +	var status workflowRunStatus
 +	err = r.post("/api/workflow/run", map[string]interface{}{
 +		"name": "team-solve", "dir": cwd, "workspace": r.workspace, "model": r.model,
-+		"prompt": text, "require_model": true,
++		"partition": partition, "prompt": openBotDeliveryPrompt(text, partition), "require_model": true,
 +	}, &status)
 +	if err != nil {
 +		return err
@@ -226,8 +230,15 @@ index 0000000..d2076fe
 +		switch status.State {
 +		case "done":
 +			terminal = true
++			if err := ctx.Err(); err != nil {
++				return err
++			}
++			answer, err := openBotTeamAnswer(cwd, partition)
++			if err != nil {
++				return err
++			}
 +			sink.ToolDone(tool, fmt.Sprintf("%d/%d steps complete.", status.Done, status.Total), false)
-+			sink.Text(openBotTeamResult(status))
++			sink.Text(answer)
 +			return nil
 +		case "failed", "stopped":
 +			terminal = true
@@ -264,22 +275,155 @@ index 0000000..d2076fe
 +	}
 +}
 +
-+func openBotTeamResult(status workflowRunStatus) string {
-+	text := strings.TrimSpace(status.Review)
-+	if text == "" {
-+		text = fmt.Sprintf("Memdoor team run %s completed (%d/%d steps).", status.ID, status.Done, status.Total)
++// The native workflow snapshots the reply with each attempt.
++func openBotReplyDir(partition string) string {
++	return filepath.Join(".memdoor", "runs", "team-solve-"+partition, "reply")
++}
++
++func openBotDeliveryPrompt(prompt, partition string) string {
++	dir := filepath.ToSlash(openBotReplyDir(partition))
++	return prompt + "\n\nOpenBot delivery for this run (include it in the deliverable, scope and checks):\n" +
++		"Write the complete final reply for the user to " + dir + "/answer.md in the project. " +
++		"For a text-only request this reply is the sole deliverable. Put the actual answer there in the requested language and format. " +
++		"For project work, do the work and describe the verified result there. " +
++		"Each time you write the reply, replace the whole file. Keep workflow notes and verdicts out of it. " +
++		"When the user wants files, append this Markdown comment at the end, replacing the example with the finished project-relative paths, one per line. " +
++		"OpenBot removes this comment and links the files. For a text-only answer omit the comment.\n" +
++		openBotArtifactHeader(partition) + "\npath/to/finished-file.pdf\n-->"
++}
++
++func openBotArtifactHeader(partition string) string { return "<!-- openbot-artifacts: " + partition }
++
++// OpenBot INPUT_LIMITS.messageText counts JavaScript UTF-16 code units.
++// One unit can take at most three UTF-8 bytes. A supplementary character
++// takes four bytes but uses two units.
++const openBotAnswerUnits = 100_000
++const openBotAnswerBytes = 3 * openBotAnswerUnits
++const openBotManifestBytes = 8192
++
++func openBotTeamAnswer(cwd, partition string) (string, error) {
++	root, err := os.OpenRoot(cwd)
++	if err != nil {
++		return "", err
 +	}
-+	if len(status.Results) > 0 {
-+		text += "\n\nFiles\n- " + strings.Join(status.Results, "\n- ")
++	defer root.Close()
++	dir := openBotReplyDir(partition)
++	reply := filepath.Join(dir, "answer.md")
++	header := openBotArtifactHeader(partition)
++	// Allow the complete body plus its removable CRLF-delimited artifact comment.
++	readLimit := int64(openBotAnswerBytes + openBotManifestBytes + len(header) + 16)
++	data, err := readOpenBotResult(root, reply, readLimit+1)
++	if err != nil {
++		return "", fmt.Errorf("Memdoor could not deliver this run's answer: %w", err)
 +	}
-+	return text
++	tooLarge := func() error {
++		return fmt.Errorf("Memdoor's reply exceeds OpenBot's %d UTF-16 code unit chat limit. The complete answer is in `%s`", openBotAnswerUnits, filepath.ToSlash(filepath.Join(cwd, reply)))
++	}
++	if int64(len(data)) > readLimit {
++		return "", tooLarge()
++	}
++	if !utf8.Valid(data) || strings.ContainsRune(string(data), '\x00') {
++		return "", errors.New("Memdoor produced an invalid text answer")
++	}
++	answer := string(data)
++	var manifest string
++	// Keep the body byte-for-byte. Only the exact marker for this run can
++	// introduce metadata, so examples of HTML comments stay ordinary text.
++	if before, block, ok := strings.Cut("\n"+answer, "\n"+header); ok {
++		answer = strings.TrimSuffix(strings.TrimPrefix(before, "\n"), "\r")
++		block = strings.TrimPrefix(block, "\r")
++		lines, opened := strings.CutPrefix(block, "\n")
++		files, closed := strings.CutSuffix(strings.TrimRight(lines, "\r\n"), "\n-->")
++		if !opened || !closed || len(files) > openBotManifestBytes {
++			return "", errors.New("Memdoor produced an invalid artifact list in its answer")
++		}
++		manifest = files
++	}
++	if strings.TrimSpace(answer) == "" && strings.TrimSpace(manifest) == "" {
++		return "", errors.New("Memdoor produced an empty answer")
++	}
++	var result strings.Builder
++	result.WriteString(answer)
++	separator := "\n\n"
++	if answer == "" {
++		separator = ""
++	} else if strings.HasSuffix(answer, "\n") {
++		separator = "\n"
++	}
++	seen := make(map[string]bool)
++	for _, entry := range strings.Split(strings.TrimSpace(manifest), "\n") {
++		name := filepath.FromSlash(strings.TrimSpace(entry))
++		if name == "" || seen[name] {
++			continue
++		}
++		if !filepath.IsLocal(name) || strings.ContainsAny(name, "`\x00\r") || filepath.Clean(name) != name {
++			return "", fmt.Errorf("Memdoor returned an invalid project artifact path %q", name)
++		}
++		for _, part := range strings.Split(filepath.ToSlash(name), "/") {
++			if strings.EqualFold(part, ".memdoor") || strings.EqualFold(part, ".git") {
++				return "", fmt.Errorf("Memdoor returned an internal file as an artifact: %s", name)
++			}
++		}
++		if err := checkOpenBotFile(root, name); err != nil {
++			return "", fmt.Errorf("Memdoor could not deliver the artifact %q: %w", name, err)
++		}
++		seen[name] = true
++		// OpenBot attaches up to ten absolute paths. Its chat also opens
++		// workspace-relative references, including any further files.
++		if len(seen) <= 10 {
++			name = filepath.Join(cwd, name)
++		}
++		result.WriteString(separator + "`" + filepath.ToSlash(name) + "`")
++		separator = "\n\n"
++	}
++	units := 0
++	for _, char := range result.String() {
++		units += utf16.RuneLen(char)
++		if units > openBotAnswerUnits {
++			return "", tooLarge()
++		}
++	}
++	return result.String(), nil
++}
++
++func readOpenBotResult(root *os.Root, path string, limit int64) ([]byte, error) {
++	if err := checkOpenBotFile(root, path); err != nil {
++		return nil, err
++	}
++	file, err := root.Open(path)
++	if err != nil {
++		return nil, err
++	}
++	defer file.Close()
++	return io.ReadAll(io.LimitReader(file, limit))
++}
++
++// Keep result files inside this project and reject links to another run.
++func checkOpenBotFile(root *os.Root, path string) error {
++	for parent := filepath.Dir(path); parent != "."; parent = filepath.Dir(parent) {
++		info, err := root.Lstat(parent)
++		if err != nil {
++			return err
++		}
++		if !info.IsDir() {
++			return fmt.Errorf("invalid result directory %q", parent)
++		}
++	}
++	info, err := root.Lstat(path)
++	if err != nil {
++		return err
++	}
++	if !info.Mode().IsRegular() {
++		return fmt.Errorf("invalid result file %q", path)
++	}
++	return nil
 +}
 diff --git a/cmd/cli/cmd/acp_openbot_team_test.go b/cmd/cli/cmd/acp_openbot_team_test.go
 new file mode 100644
-index 0000000..219b2c8
+index 0000000..7c070a6
 --- /dev/null
 +++ b/cmd/cli/cmd/acp_openbot_team_test.go
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,268 @@
 +package cmd
 +
 +import (
@@ -345,13 +489,31 @@ index 0000000..219b2c8
 +
 +func TestOpenBotTeamReturnsTheFinalResult(t *testing.T) {
 +	var actions []string
++	cwd := t.TempDir()
++	write := func(name, data string) {
++		t.Helper()
++		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(name, []byte(data), 0600); err != nil {
++			t.Fatal(err)
++		}
++	}
++	write(filepath.Join(cwd, "answer.md"), "stale answer")
++	write(filepath.Join(cwd, openBotReplyDir("previous"), "answer.md"), "previous turn")
++	artifact := filepath.Join(cwd, "reports", "Q4 report.csv")
++	write(artifact, "revenue,42")
++	var partition string
 +	post := func(path string, body interface{}, result interface{}) error {
 +		actions = append(actions, path)
 +		req := body.(map[string]interface{})
 +		out := result.(*workflowRunStatus)
 +		switch path {
 +		case "/api/workflow/run":
-+			if req["name"] != "team-solve" || req["model"] != "openai:gpt-6.2-sol" || req["prompt"] != "Check the code." {
++			partition = req["partition"].(string)
++			prompt := req["prompt"].(string)
++			if req["name"] != "team-solve" || req["model"] != "openai:gpt-6.2-sol" || !strings.HasPrefix(prompt, "Analyze Q4.\n") ||
++				!strings.Contains(prompt, ".memdoor/runs/team-solve-"+partition+"/reply/answer.md") {
 +				return fmt.Errorf("wrong team request: %v", req)
 +			}
 +			*out = workflowRunStatus{ID: "team-1", State: "running", Total: 2}
@@ -359,17 +521,151 @@ index 0000000..219b2c8
 +			if req["run_id"] != "team-1" {
 +				return errors.New("wrong run")
 +			}
-+			*out = workflowRunStatus{ID: "team-1", State: "done", Done: 2, Total: 2, Review: "Verified the change."}
++			dir := filepath.Join(cwd, openBotReplyDir(partition))
++			write(filepath.Join(dir, "answer.md"), "Revenue was 42.\n\nIt doubled over Q3.\r\n"+
++				openBotArtifactHeader(partition)+"\r\nreports/Q4 report.csv\r\n-->\r\n")
++			*out = workflowRunStatus{ID: "team-1", Partition: partition, State: "done", Done: 2, Total: 2,
++				Results: []string{".memdoor/runs/team-solve-" + partition + "/outline.md"}}
 +		}
 +		return nil
 +	}
 +	sink := &openBotTestSink{}
 +	settings := openBotTeamRunner{post: post, model: "openai:gpt-6.2-sol", interval: time.Millisecond}
-+	if err := settings.Run(context.Background(), "chat", t.TempDir(), "Check the code.", sink); err != nil {
++	if err := settings.Run(context.Background(), "chat", cwd, "Analyze Q4.", sink); err != nil {
 +		t.Fatal(err)
 +	}
-+	if len(actions) != 2 || !strings.Contains(sink.output[len(sink.output)-1], "Verified the change.") {
++	if len(actions) != 2 || len(sink.output) != 1 || sink.output[0] != "Revenue was 42.\n\nIt doubled over Q3.\n\n`"+filepath.ToSlash(artifact)+"`" {
 +		t.Fatalf("actions %v, output %v", actions, sink.output)
++	}
++}
++
++func TestOpenBotTeamDoesNotDeliverAnotherRunsAnswer(t *testing.T) {
++	cwd := t.TempDir()
++	if err := os.WriteFile(filepath.Join(cwd, "answer.md"), []byte("previous answer"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	for _, state := range []string{"done", "failed", "stopped"} {
++		t.Run(state, func(t *testing.T) {
++			sink := &openBotTestSink{}
++			r := &openBotTeamRunner{interval: time.Second, post: func(path string, body, result interface{}) error {
++				if path != "/api/workflow/run" {
++					t.Fatalf("unexpected request %s", path)
++				}
++				*result.(*workflowRunStatus) = workflowRunStatus{ID: "finished", State: state, Results: []string{"answer.md"}}
++				return nil
++			}}
++			if err := r.Run(context.Background(), "chat", cwd, "New prompt", sink); err == nil || len(sink.output) != 0 {
++				t.Fatalf("state %s: err %v, output %v", state, err, sink.output)
++			}
++		})
++	}
++}
++
++func TestOpenBotTeamDeliversWholeSupportedAnswers(t *testing.T) {
++	cwd := t.TempDir()
++	dir := filepath.Join(cwd, openBotReplyDir("test"))
++	if err := os.MkdirAll(dir, 0700); err != nil {
++		t.Fatal(err)
++	}
++	reply := filepath.Join(dir, "answer.md")
++	for _, tc := range []struct {
++		name     string
++		answer   string
++		tooLarge bool
++	}{
++		{"25000 ASCII", strings.Repeat("x", 25_000), false},
++		{"32000 UTF-16 units with emoji and CJK", strings.Repeat("🌍界x", 8_000), false},
++		{"32001 for the workflow to check", strings.Repeat("界", 32_000) + "\n", false},
++		{"chat limit in UTF-8 bytes", strings.Repeat("界", 100_000), false},
++		{"chat limit in surrogate pairs", strings.Repeat("🌍", 50_000), false},
++		{"preserves indentation and final newlines", "  indented\r\n\r\n", false},
++		{"over chat limit in ASCII", strings.Repeat("x", 100_001), true},
++		{"over chat limit in surrogate pairs", strings.Repeat("🌍", 50_000) + "x", true},
++		{"over chat limit in UTF-8 bytes", strings.Repeat("界", 100_001), true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			if err := os.WriteFile(reply, []byte(tc.answer), 0600); err != nil {
++				t.Fatal(err)
++			}
++			got, err := openBotTeamAnswer(cwd, "test")
++			if tc.tooLarge {
++				if got != "" || err == nil || !strings.Contains(err.Error(), "`"+filepath.ToSlash(reply)+"`") {
++					t.Fatalf("oversized answer returned %d bytes, err %v", len(got), err)
++				}
++				return
++			}
++			if err != nil || got != tc.answer {
++				t.Fatalf("expected complete %d-byte answer, got %d bytes, err %v", len(tc.answer), len(got), err)
++			}
++		})
++	}
++}
++
++func TestOpenBotTeamBoundsAnswersAndChecksArtifacts(t *testing.T) {
++	cwd := t.TempDir()
++	dir := filepath.Join(cwd, openBotReplyDir("test"))
++	if err := os.MkdirAll(dir, 0700); err != nil {
++		t.Fatal(err)
++	}
++	reply := filepath.Join(dir, "answer.md")
++	if err := os.WriteFile(filepath.Join(cwd, "report.txt"), []byte("42"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	writeAnswer := func(body, file string) {
++		t.Helper()
++		if err := os.WriteFile(reply, []byte(body+"\n"+openBotArtifactHeader("test")+"\n"+file+"\n-->"), 0600); err != nil {
++			t.Fatal(err)
++		}
++	}
++	writeAnswer(strings.Repeat("x", 100_000), "report.txt")
++	if answer, err := openBotTeamAnswer(cwd, "test"); answer != "" || err == nil || !strings.Contains(err.Error(), "100000") {
++		t.Fatalf("links above the chat limit returned %d bytes, err %v", len(answer), err)
++	}
++	if err := os.WriteFile(reply, []byte(openBotArtifactHeader("test")+"\nreport.txt\n-->"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if got, err := openBotTeamAnswer(cwd, "test"); err != nil || got != "`"+filepath.ToSlash(filepath.Join(cwd, "report.txt"))+"`" {
++		t.Fatalf("file-only reply %q, err %v", got, err)
++	}
++	for _, name := range []string{"../secret.txt", ".git/config", ".memdoor/runs/outline.md", "missing.csv", "."} {
++		writeAnswer("answer", name)
++		if answer, err := openBotTeamAnswer(cwd, "test"); err == nil || answer != "" {
++			t.Errorf("returned invalid artifact %q", name)
++		}
++	}
++}
++
++func TestOpenBotTeamDeliversTheInPlaceRepairWithoutStaleArtifacts(t *testing.T) {
++	repo, err := filepath.Abs(filepath.Join("..", "..", ".."))
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, unborn := range []bool{false, true} {
++		t.Run(fmt.Sprintf("unborn=%t", unborn), func(t *testing.T) {
++			cwd := t.TempDir()
++			cmd := exec.Command("bash", "-ec", `
++				if [ "$2" = true ]; then git init -q; fi
++				w="$1/workflows/team-solve"; r=.memdoor/runs/team-solve-openbot-example
++				mkdir -p "$r/reply"; touch "$r/start"
++				echo original > before.txt
++				printf 'first answer\n<!-- openbot-artifacts: openbot-example\nbefore.txt\n-->\n' > "$r/reply/answer.md"
++				bash "$w/snapshot.sh" save "$r" a
++				bash "$w/snapshot.sh" reset "$r"
++				bash "$w/done.sh" direct "$r"
++				bash "$w/snapshot.sh" save "$r" direct
++				printf 'final repair without an attachment' > "$r/reply/answer.md"
++				bash "$w/done.sh" delivery "$r"
++			`, "test", filepath.ToSlash(repo), fmt.Sprint(unborn))
++			cmd.Dir = cwd
++			cmd.Env = append(os.Environ(), "MEMDOOR_OPENBOT_TEAM=1", "MEMDOOR_OPENBOT_STATE_DIR="+filepath.ToSlash(repo))
++			if out, err := cmd.CombinedOutput(); err != nil {
++				t.Fatalf("native workflow: %v\n%s", err, out)
++			}
++			text, err := openBotTeamAnswer(cwd, "openbot-example")
++			if err != nil || text != "final repair without an attachment" {
++				t.Fatalf("in-place result %q, err %v", text, err)
++			}
++		})
 +	}
 +}
 +
@@ -630,10 +926,10 @@ index db1d3b4..b6fd00e 100644
  	// key; the decision model and web search still run on that key.
 diff --git a/gateway/openbot_team_settings.go b/gateway/openbot_team_settings.go
 new file mode 100644
-index 0000000..47f9bd3
+index 0000000..7529537
 --- /dev/null
 +++ b/gateway/openbot_team_settings.go
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,96 @@
 +package gateway
 +
 +import (
@@ -697,6 +993,10 @@ index 0000000..47f9bd3
 +		}
 +		name := task.Full[strings.LastIndex(task.Full, ".")+1:]
 +		role, ok := roles[name]
++		if !ok && def.Item != "" {
++			name = strings.TrimSuffix(name, "-"+def.Item)
++			role, ok = roles[name]
++		}
 +		if !ok {
 +			continue
 +		}
@@ -728,18 +1028,29 @@ index 0000000..47f9bd3
 +}
 diff --git a/gateway/openbot_team_settings_test.go b/gateway/openbot_team_settings_test.go
 new file mode 100644
-index 0000000..a5ceecf
+index 0000000..45b25ea
 --- /dev/null
 +++ b/gateway/openbot_team_settings_test.go
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,147 @@
 +package gateway
 +
 +import (
 +	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"strings"
 +	"testing"
 +	"text/template"
 +
 +	"github.com/guregodevo/mario/templates"
++	"memdoor/gateway/providers"
++	"memdoor/internal/testenv"
 +	"memdoor/pkg/workflow"
 +)
 +
@@ -771,6 +1082,197 @@ index 0000000..a5ceecf
 +		t.Fatalf("prompt was %q, want %q", got.String(), want)
 +	}
 +}
++
++func TestOpenBotTeamRoleAppliesToExpandedIdeas(t *testing.T) {
++	s := &Server{}
++	wf, err := workflow.Load(filepath.Join("..", "workflows", "team-solve"), workflow.Registry(s.workflowTypes(nil)...))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := applyOpenBotTeamRoles(&wf, map[string]openBotTeamRole{
++		"ideate":   {Model: "gpt-6.1-sol", Effort: "xhigh", Prompt: "Consider memory usage."},
++		"direct-a": {Model: "gpt-6.2-sol", Effort: "max"},
++	}); err != nil {
++		t.Fatal(err)
++	}
++	for _, name := range []string{"ideate-a", "ideate-b"} {
++		task, ok := wf.Task(name)
++		if !ok || task.Model != "openai:gpt-6.1-sol thinking xhigh" || !strings.Contains(task.Prompt, "Consider memory usage.") {
++			t.Fatalf("%s missed its role override", name)
++		}
++		def := wf.Defs[task.Full]
++		if def.Model != task.Model || def.Prompt != task.Prompt || !strings.Contains(def.Prompt, ".item") {
++			t.Fatalf("%s lost its expanded workflow prompt", name)
++		}
++	}
++	direct, _ := wf.Task("direct-a")
++	session := &Session{Metadata: map[string]interface{}{}}
++	if err := pinTaskModel(session, direct.Model, ""); err != nil || sessionString(session, sessionEffortKey) != "max" || sessionModel(session) != "openai:gpt-6.2-sol" {
++		t.Fatalf("direct-a override did not reach its session: %v, %v", session.Metadata, err)
++	}
++	if other, _ := wf.Task("direct-b"); other.Model != "" {
++		t.Fatalf("direct-b took another role's override: %q", other.Model)
++	}
++}
++
++func TestOpenBotTeamRoleEffortReachesResponses(t *testing.T) {
++	testenv.Home(t)
++	t.Setenv("MEMDOOR_OPENBOT_STATE_DIR", t.TempDir())
++	t.Setenv("MEMDOOR_OPENBOT_TEAM", "1")
++	t.Setenv("MEMDOOR_MODEL", "gpt-6.2-sol")
++	t.Setenv("OPENAI_API_KEY", "fixture-key")
++	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:1")
++	type request struct {
++		Model       string
++		Reasoning   map[string]string
++		Temperature *float64
++		TopP        *float64 `json:"top_p"`
++	}
++	bodies := make(chan request, 1)
++	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.Host != "api.openai.com" || r.URL.Path != "/v1/responses" || r.Header.Get("Authorization") != "Bearer fixture-key" {
++			http.Error(w, "unexpected request", http.StatusBadRequest)
++			return
++		}
++		var body request
++		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
++			http.Error(w, err.Error(), http.StatusBadRequest)
++			return
++		}
++		bodies <- body
++		w.Header().Set("Content-Type", "application/json")
++		io.WriteString(w, `{"id":"fixture","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}`)
++	}))
++	defer fixture.Close()
++	original := http.DefaultTransport
++	http.DefaultTransport = &http.Transport{
++		DialContext: func(context.Context, string, string) (net.Conn, error) {
++			return nil, fmt.Errorf("unexpected HTTP request")
++		},
++		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
++			if addr != "api.openai.com:443" {
++				return nil, fmt.Errorf("unexpected destination %s", addr)
++			}
++			return (&net.Dialer{}).DialContext(ctx, network, fixture.Listener.Addr().String())
++		},
++	}
++	t.Cleanup(func() { http.DefaultTransport = original })
++	c := workflowCompleter{s: &Server{clientFactory: providers.NewClientFactory()}}
++	for _, effort := range []string{"", "low", "medium", "high", "xhigh", "max", "none"} {
++		t.Run("effort="+effort, func(t *testing.T) {
++			def := &templates.YamlTaskDefinition{Type: "llm"}
++			wf := workflow.Workflow{Defs: map[string]*templates.YamlTaskDefinition{"plan": def}, Tasks: []workflow.Task{{Full: "plan"}}}
++			if err := applyOpenBotTeamRoles(&wf, map[string]openBotTeamRole{"plan": {Model: "gpt-6-sol", Effort: effort}}); err != nil {
++				t.Fatal(err)
++			}
++			if answer, err := c.Complete(t.Context(), def.Model+" temperature 0.4 top_p 0.8", "test"); err != nil || answer != "ok" {
++				t.Fatalf("answer %q, error %v", answer, err)
++			}
++			body := <-bodies
++			if body.Model != "gpt-6-sol" || body.Reasoning["effort"] != effort || (effort == "") != (body.Reasoning == nil) {
++				t.Fatalf("Responses body: %+v", body)
++			}
++			sampling := effort == "" || effort == "none"
++			if (body.Temperature != nil) != sampling || (body.TopP != nil) != sampling {
++				t.Fatalf("sampling parameters for %q: %+v", effort, body)
++			}
++		})
++	}
++}
+diff --git a/gateway/providers/factory.go b/gateway/providers/factory.go
+index 02d6d5b..e1da2db 100644
+--- a/gateway/providers/factory.go
++++ b/gateway/providers/factory.go
+@@ -2,7 +2,10 @@ package providers
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"fmt"
++	"os"
++	"strings"
+ )
+ 
+ // ClientFactory hands out the client for a turn. Every request goes through
+@@ -18,6 +21,14 @@ func NewClientFactory() *ClientFactory {
+ 
+ // GetClientFor is the client for one agent's turn.
+ func (f *ClientFactory) GetClientFor(ctx context.Context, agent string) (LLMClient, error) {
++	if os.Getenv("MEMDOOR_OPENBOT_TEAM") == "1" {
++		engine, ok, reason := VendorEngine()
++		if !ok {
++			return nil, errors.New(reason)
++		}
++		model := strings.TrimPrefix(engine.AnsweringModel(ctx, agent), VendorOpenAI+":")
++		return newVendorClient(ctx, &engine, model), nil
++	}
+ 	if m := ModelFromContext(ctx); m != "" {
+ 		if p, model, ok := FindModel(ctx, m); ok {
+ 			return p.Client(ctx, model.ID), nil
+diff --git a/gateway/providers/responses.go b/gateway/providers/responses.go
+index a5c415e..d8274d4 100644
+--- a/gateway/providers/responses.go
++++ b/gateway/providers/responses.go
+@@ -9,6 +9,7 @@ import (
+ 	"io"
+ 	"log/slog"
+ 	"net/http"
++	"os"
+ 	"strings"
+ 	"time"
+ 
+@@ -56,16 +57,29 @@ func (c *responsesClient) Messages() MessageService { return &responsesMessages{
+ 
+ type responsesMessages struct{ client *responsesClient }
+ 
++type openBotRoleEffortKey struct{}
++
++func WithOpenBotRoleEffort(ctx context.Context, effort string) context.Context {
++	if effort == "" || os.Getenv("MEMDOOR_OPENBOT_TEAM") != "1" {
++		return ctx
++	}
++	if effort == "off" {
++		effort = "none"
++	}
++	return context.WithValue(ctx, openBotRoleEffortKey{}, effort)
++}
++
+ type responsesRequest struct {
+-	Model           string          `json:"model"`
+-	Instructions    string          `json:"instructions,omitempty"`
+-	Input           []any           `json:"input"`
+-	Tools           []responsesTool `json:"tools,omitempty"`
+-	MaxOutputTokens int64           `json:"max_output_tokens,omitempty"`
+-	Temperature     float64         `json:"temperature,omitempty"`
+-	TopP            float64         `json:"top_p,omitempty"` // the Responses API takes no top_k
+-	Stream          bool            `json:"stream"`
+-	Store           *bool           `json:"store,omitempty"`
++	Model           string            `json:"model"`
++	Instructions    string            `json:"instructions,omitempty"`
++	Input           []any             `json:"input"`
++	Tools           []responsesTool   `json:"tools,omitempty"`
++	MaxOutputTokens int64             `json:"max_output_tokens,omitempty"`
++	Temperature     float64           `json:"temperature,omitempty"`
++	TopP            float64           `json:"top_p,omitempty"` // the Responses API takes no top_k
++	Reasoning       map[string]string `json:"reasoning,omitempty"`
++	Stream          bool              `json:"stream"`
++	Store           *bool             `json:"store,omitempty"`
+ 	// ToolChoice is "required" on a retry that must open on a call
+ 	// (llm.WithForcedToolCall), as the chat client sends it; absent
+ 	// otherwise, so the model decides. Missed when the OpenAI key moved to
+@@ -162,6 +176,12 @@ func (m *responsesMessages) New(ctx context.Context, params llm.MessageNewParams
+ 	}
+ 	req := responsesRequest{Model: model, Instructions: systemText(params.System), Input: responsesInput(params.Messages),
+ 		MaxOutputTokens: params.MaxTokens, Temperature: params.Temperature, TopP: params.TopP, Stream: true}
++	if effort, ok := ctx.Value(openBotRoleEffortKey{}).(string); ok {
++		req.Reasoning = map[string]string{"effort": effort}
++		if effort != "none" {
++			req.Temperature, req.TopP = 0, 0
++		}
++	}
+ 	if m.client.plan {
+ 		// developers.openai.com/siwc/token-sharing-open-source/preview-limitations:
+ 		// store false, stream true, and no temperature, max_output_tokens,
 diff --git a/gateway/providers/vendor.go b/gateway/providers/vendor.go
 index 01fd17b..206fc9c 100644
 --- a/gateway/providers/vendor.go
@@ -879,10 +1381,26 @@ index f38c47f..3f3a074 100644
  	// work (log flush, database close). On a clean SIGTERM, ListenAndServe
  	// returns http.ErrServerClosed the moment srv.Shutdown() runs; without this
 diff --git a/gateway/workflow_runs.go b/gateway/workflow_runs.go
-index ea30b0e..a95dc2a 100644
+index ea30b0e..d00c421 100644
 --- a/gateway/workflow_runs.go
 +++ b/gateway/workflow_runs.go
-@@ -909,6 +909,14 @@ func (s *Server) checkWorkflow(dir, name string) (workflow.Workflow, error) {
+@@ -428,6 +428,7 @@ func (c workflowCompleter) CompleteWithSystem(ctx context.Context, model, system
+ 		}
+ 		if tm.Effort != "" {
+ 			ctx = context.WithValue(ctx, sharedctx.EffortKey, tm.Effort)
++			ctx = providers.WithOpenBotRoleEffort(ctx, tm.Effort)
+ 		}
+ 	}
+ 	ctx = context.WithValue(ctx, "buddy_agent_name", workflowModelAgent) //nolint:staticcheck // the key the agent runtime reads
+@@ -570,6 +571,7 @@ func (r *workflowRunner) Run(ctx context.Context, t workflow.TaskRun) (string, e
+ 			if err := pinTaskModel(sess, firstNonEmptyString(t.Task.Model, r.run.Model), r.run.Actor); err != nil {
+ 				return "", fmt.Errorf("task %s: %w", t.Task.Name, err)
+ 			}
++			ctx = providers.WithOpenBotRoleEffort(ctx, sessionString(sess, sessionEffortKey))
+ 		}
+ 	}
+ 
+@@ -909,6 +911,14 @@ func (s *Server) checkWorkflow(dir, name string) (workflow.Workflow, error) {
  	if dir == "" || !filepath.IsAbs(dir) {
  		return workflow.Workflow{}, fmt.Errorf("a workflow runs in a project: give its absolute directory")
  	}
@@ -897,6 +1415,18 @@ index ea30b0e..a95dc2a 100644
  	path, err := workflow.Find(dir, name)
  	if err != nil {
  		return workflow.Workflow{}, err
+@@ -2057,7 +2067,10 @@ func parseTaskModel(model string) (m taskModel) {
+ 		case "thinking", "effort":
+ 			if i+1 < len(fields) {
+ 				switch e := strings.ToLower(fields[i+1]); e {
+-				case "off", "low", "medium", "high":
++				case "none":
++					m.Effort = "off"
++					i++
++				case "off", "low", "medium", "high", "xhigh", "max":
+ 					m.Effort = e
+ 					i++
+ 				}
 diff --git a/pkg/decision/openai/client.go b/pkg/decision/openai/client.go
 new file mode 100644
 index 0000000..2a08d61
@@ -1441,11 +1971,28 @@ index 840149a..6cb0cc0 100644
  	home, err := os.UserHomeDir()
  	if err != nil {
  		home = ""
+diff --git a/workflows/team-solve/changes.sh b/workflows/team-solve/changes.sh
+index 8eca0a9..ac8938c 100755
+--- a/workflows/team-solve/changes.sh
++++ b/workflows/team-solve/changes.sh
+@@ -16,4 +16,12 @@ else
+     printf '=== %s\n' "$f" >> "$out"; head -c 20000 "$f" >> "$out"; printf '\n' >> "$out"
+   done
+ fi
++if [ "${MEMDOOR_OPENBOT_TEAM:-}" = 1 ] && [[ "$r" == .memdoor/runs/team-solve-openbot-* ]] && [ ! -L "$r/reply" ]; then
++  f="$r/reply/answer.md"
++  if [ ! -L "$f" ] && [ -s "$f" ]; then
++    printf '\n=== %s\n' "$f" >> "$out"
++    # Up to 300,000 UTF-8 bytes of chat text plus its artifact comment.
++    head -c 309000 "$f" >> "$out"; printf '\n' >> "$out"
++  fi
++fi
+ printf 'changes: %s lines in %s\n' "$(wc -l < "$out" | tr -d ' ')" "$out"
 diff --git a/workflows/team-solve/done.sh b/workflows/team-solve/done.sh
-index 1184568..95b7d33 100755
+index 1184568..d7e6f0e 100755
 --- a/workflows/team-solve/done.sh
 +++ b/workflows/team-solve/done.sh
-@@ -5,7 +5,7 @@
+@@ -5,13 +5,23 @@
  # target (gateway/target_guard.go).
  set -u
  step="$1"; r="$2"; miss=0
@@ -1454,6 +2001,92 @@ index 1184568..95b7d33 100755
  no() { printf 'not done: %s\n' "$1"; miss=1; }
  # section <file> <heading>: the lines under "## <heading>", comments and blanks dropped.
  section() { sed -n "/^## $2\$/,/^## /p" "$1" | sed '1d;/^## /d;/^<!--.*-->$/d;/^[[:space:]]*$/d'; }
+ verdict() { [ -s "$1" ] && head -1 "$1" | grep -qE '^verdict: (PASS|FAIL)$'; }
++delivery() {
++  [ "${MEMDOOR_OPENBOT_TEAM:-}" = 1 ] || return 0
++  case "${r##*/}" in
++    team-solve-openbot-*)
++      reply="$r/reply/answer.md"
++      [ ! -L "$r/reply" ] && [ -f "$reply" ] && [ ! -L "$reply" ] && [ -s "$reply" ] || no "write this run's complete reply to $reply"
++      ;;
++  esac
++}
+ 
+ case "$step" in
++delivery) delivery ;;
+ plan)
+   t="$r/task.md"
+   for s in Deliverable Check Scope "Done when"; do
+@@ -30,6 +40,7 @@ attempt)
+   # attempts run at once and would share changes.diff.
+   [ -n "$(git status --porcelain -- . ':(exclude).memdoor' 2>/dev/null)" ] || no 'nothing in the project changed yet: do the task as the Deliverable says' ;;
+ direct|solve)
++  delivery
+   bash "$w/changes.sh" "$r" > /dev/null
+   [ -s "$r/changes.diff" ] || no 'nothing in the project changed yet: do the task as the Deliverable says' ;;
+ reproduce)
+diff --git a/workflows/team-solve/snapshot.sh b/workflows/team-solve/snapshot.sh
+index 9239b64..d02b44b 100644
+--- a/workflows/team-solve/snapshot.sh
++++ b/workflows/team-solve/snapshot.sh
+@@ -7,12 +7,56 @@
+ # attempt did not; otherwise the attempt is put back.
+ set -u
+ mode="$1"; r="$2"; name="${3:-}"; p="$r/$name.patch"
+-git rev-parse --is-inside-work-tree >/dev/null 2>&1 && [ -s "$r/base.txt" ] || { echo "snapshot: not in git, nothing kept"; exit 0; }
++if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1 || [ ! -s "$r/base.txt" ]; then
++  # Attempts share the live tree here. Only the selected direct reply can
++  # be put back; never claim to have rolled back other project changes.
++  if [ "${MEMDOOR_OPENBOT_TEAM:-}" != 1 ] || [[ "$r" != .memdoor/runs/team-solve-openbot-* ]] || [ "$name" != direct ]; then
++    echo "snapshot: no git baseline, working in place"; exit 0
++  fi
++  reply="$r/reply/answer.md"; saved="$r/direct.answer.md"; state="$r/direct.project"
++  project_stamp() (
++    set -o pipefail
++    # Hash filesystem metadata, including names, link targets and high-resolution
++    # modification/change times. Stream it without reading or copying project files.
++    export LC_ALL=C
++    find . -mindepth 1 \( -path './.memdoor' -o -path './.git' \) -prune -o \
++      -printf '%y %m %s %T@ %C@ %p\0%l\0' | git hash-object --stdin
++  )
++  same_project() {
++    [ -s "$state" ] && [ "$(cat "$state")" != unknown ] &&
++      stamp=$(project_stamp) && [ "$stamp" = "$(cat "$state")" ]
++  }
++  case "$mode" in
++    save)
++      [ ! -L "$state" ] && [ ! -L "$saved" ] || { echo "snapshot: invalid direct checkpoint path"; exit 1; }
++      stamp=$(project_stamp) || stamp=unknown
++      printf '%s\n' "$stamp" > "$state" || exit 1
++      if [ ! -f "$reply" ] || [ -L "$reply" ] || [ -L "$r/reply" ]; then
++        [ "$(cat "$r/direct-status.txt" 2>/dev/null)" != 0 ] || { echo "snapshot: missing direct answer"; exit 1; }
++        exit 0
++      fi
++      cp -- "$reply" "$saved" || exit 1 ;;
++    unchanged)
++      cmp -s "$saved" "$reply" && same_project || exit 1 ;;
++    restore)
++      [ -f "$saved" ] && [ -s "$saved" ] && [ ! -L "$saved" ] && [ ! -L "$r/reply" ] && [ ! -d "$reply" ] || { echo "snapshot: no regular direct answer to restore"; exit 1; }
++      same_project || { echo "snapshot: cannot restore the direct answer because the project changed or its state could not be verified without a Git baseline"; exit 1; }
++      mkdir -p "$r/reply" && tmp=$(mktemp "$r/restore.XXXXXXXX") || exit 1
++      trap 'rm -f -- "$tmp"' EXIT
++      cp -- "$saved" "$tmp" && mv -f -- "$tmp" "$reply" || exit 1 ;;
++  esac
++  exit 0
++fi
+ base=$(cat "$r/base.txt")
+ new_files() {
+   git ls-files --others --exclude-standard -- . ':(exclude).memdoor' ':(exclude,glob)**/__pycache__/**' | while IFS= read -r f; do
+     grep -qxF -- "$f" "$r/untracked-before.txt" 2>/dev/null || printf '%s\n' "$f"
+   done
++  # OpenBot's reply belongs to the chosen attempt even though the rest of
++  # .memdoor is ignored. Artifact references are part of this same reply.
++  if [ "${MEMDOOR_OPENBOT_TEAM:-}" = 1 ] && [[ "$r" == .memdoor/runs/team-solve-openbot-* ]] && [ ! -L "$r/reply" ]; then
++    f="$r/reply/answer.md"; [ ! -L "$f" ] && [ -f "$f" ] && printf '%s\n' "$f"
++  fi
+ }
+ case "$mode" in
+ save)
 diff --git a/workflows/team-solve/steps/baseline.yaml b/workflows/team-solve/steps/baseline.yaml
 index f94d78f..6aeb37b 100644
 --- a/workflows/team-solve/steps/baseline.yaml
@@ -1467,6 +2100,51 @@ index f94d78f..6aeb37b 100644
    [ -s "$r/base.txt" ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "baseline: not in git, none taken"; exit 0; }
    t="$r/baseline-tree"
    git worktree add -q --detach "$t" "$(cat "$r/base.txt")" 2>/dev/null || { echo "baseline: no clean copy, none taken"; exit 0; }
+diff --git a/workflows/team-solve/steps/direct-a.yaml b/workflows/team-solve/steps/direct-a.yaml
+index 1e4cb45..2051939 100644
+--- a/workflows/team-solve/steps/direct-a.yaml
++++ b/workflows/team-solve/steps/direct-a.yaml
+@@ -13,8 +13,8 @@ requires:
+ prompt: |
+   {{ file (printf ".memdoor/runs/team-solve-%s/prompt.md" .partition) }}
+ 
+-  Do not commit, check out, reset or stash: the tree's HEAD stays where it is. Write what the task asks for as soon as you have a first version, then improve it: a turn that ends without it has done nothing. Keep no rule with the notes tool (it writes the project's AGENTS.md), and leave .memdoor/ alone.
+-  Also write .memdoor/runs/team-solve-{{.partition}}/attempt-a: one executable (chmod +x) that, run from the project's root, exits non-zero on the tree as you found it and 0 with your change, the smallest check that shows your change does what the prompt asks, in whatever this project runs. It is not part of the change: nothing else goes into .memdoor/.
++  Do not commit, check out, reset or stash: the tree's HEAD stays where it is. Write what the task asks for as soon as you have a first version, then improve it: a turn that ends without it has done nothing. Keep no rule with the notes tool (it writes the project's AGENTS.md).
++  Also write .memdoor/runs/team-solve-{{.partition}}/attempt-a: one executable (chmod +x) that, run from the project's root, exits non-zero on the tree as you found it and 0 with your change, the smallest check that shows your change does what the prompt asks, in whatever this project runs. Inside .memdoor/ write only this check and the reply files when the prompt names an OpenBot delivery.
+ target:
+   command: bash .memdoor/runs/team-solve-{{.partition}}/done.sh direct .memdoor/runs/team-solve-{{.partition}}
+ timeout: 30m
+diff --git a/workflows/team-solve/steps/direct-b.yaml b/workflows/team-solve/steps/direct-b.yaml
+index 9c25ec9..98f1ffc 100644
+--- a/workflows/team-solve/steps/direct-b.yaml
++++ b/workflows/team-solve/steps/direct-b.yaml
+@@ -13,8 +13,8 @@ requires:
+ prompt: |
+   {{ file (printf ".memdoor/runs/team-solve-%s/prompt.md" .partition) }}
+ 
+-  Do not commit, check out, reset or stash: the tree's HEAD stays where it is. Write what the task asks for as soon as you have a first version, then improve it: a turn that ends without it has done nothing. Keep no rule with the notes tool (it writes the project's AGENTS.md), and leave .memdoor/ alone.
+-  Also write .memdoor/runs/team-solve-{{.partition}}/attempt-b: one executable (chmod +x) that, run from the project's root, exits non-zero on the tree as you found it and 0 with your change, the smallest check that shows your change does what the prompt asks, in whatever this project runs. It is not part of the change: nothing else goes into .memdoor/.
++  Do not commit, check out, reset or stash: the tree's HEAD stays where it is. Write what the task asks for as soon as you have a first version, then improve it: a turn that ends without it has done nothing. Keep no rule with the notes tool (it writes the project's AGENTS.md).
++  Also write .memdoor/runs/team-solve-{{.partition}}/attempt-b: one executable (chmod +x) that, run from the project's root, exits non-zero on the tree as you found it and 0 with your change, the smallest check that shows your change does what the prompt asks, in whatever this project runs. Inside .memdoor/ write only this check and the reply files when the prompt names an OpenBot delivery.
+ target:
+   command: bash .memdoor/runs/team-solve-{{.partition}}/done.sh direct .memdoor/runs/team-solve-{{.partition}}
+ timeout: 30m
+diff --git a/workflows/team-solve/steps/direct-c.yaml b/workflows/team-solve/steps/direct-c.yaml
+index 80684e1..e9bc4b6 100644
+--- a/workflows/team-solve/steps/direct-c.yaml
++++ b/workflows/team-solve/steps/direct-c.yaml
+@@ -13,8 +13,8 @@ requires:
+ prompt: |
+   {{ file (printf ".memdoor/runs/team-solve-%s/prompt.md" .partition) }}
+ 
+-  Do not commit, check out, reset or stash: the tree's HEAD stays where it is. Write what the task asks for as soon as you have a first version, then improve it: a turn that ends without it has done nothing. Keep no rule with the notes tool (it writes the project's AGENTS.md), and leave .memdoor/ alone.
+-  Also write .memdoor/runs/team-solve-{{.partition}}/attempt-c: one executable (chmod +x) that, run from the project's root, exits non-zero on the tree as you found it and 0 with your change, the smallest check that shows your change does what the prompt asks, in whatever this project runs. It is not part of the change: nothing else goes into .memdoor/.
++  Do not commit, check out, reset or stash: the tree's HEAD stays where it is. Write what the task asks for as soon as you have a first version, then improve it: a turn that ends without it has done nothing. Keep no rule with the notes tool (it writes the project's AGENTS.md).
++  Also write .memdoor/runs/team-solve-{{.partition}}/attempt-c: one executable (chmod +x) that, run from the project's root, exits non-zero on the tree as you found it and 0 with your change, the smallest check that shows your change does what the prompt asks, in whatever this project runs. Inside .memdoor/ write only this check and the reply files when the prompt names an OpenBot delivery.
+ target:
+   command: bash .memdoor/runs/team-solve-{{.partition}}/done.sh direct .memdoor/runs/team-solve-{{.partition}}
+ timeout: 30m
 diff --git a/workflows/team-solve/steps/judge-rule.yaml b/workflows/team-solve/steps/judge-rule.yaml
 index dea9521..f9b9ffa 100644
 --- a/workflows/team-solve/steps/judge-rule.yaml
@@ -1500,7 +2178,7 @@ index 3086d03..cbc33a0 100644
  requires:
    - table_pattern: recheck
 diff --git a/workflows/team-solve/steps/keep.yaml b/workflows/team-solve/steps/keep.yaml
-index 0b3cbb8..3650f3a 100644
+index 0b3cbb8..601f22e 100644
 --- a/workflows/team-solve/steps/keep.yaml
 +++ b/workflows/team-solve/steps/keep.yaml
 @@ -11,7 +11,7 @@ requires:
@@ -1512,6 +2190,41 @@ index 0b3cbb8..3650f3a 100644
    direct=$(cat "$r/direct-status.txt" 2>/dev/null)
    final=$(cat "$r/final-status.txt" 2>/dev/null)
    # The judge's answer is judge-score's pass (#160): the decision model's
+@@ -29,6 +29,12 @@ command: |
+     bash "$w/snapshot.sh" save "$r" now > /dev/null
+     cmp -s "$r/now.patch" "$r/direct.patch" || touched=yes
+   fi
++  if [ "$touched" = no ] && [ -f "$r/direct.project" ]; then
++    if ! cmp -s "$r/direct.answer.md" "$r/reply/answer.md"; then touched=yes
++    elif grep -q '"pass":false' "$r/review-score.json" 2>/dev/null; then
++      bash "$w/snapshot.sh" unchanged "$r" direct || touched=yes
++    fi
++  fi
+   if [ "$touched" = no ]; then
+     echo "kept: the direct attempt, untouched" | tee "$r/keep.txt"; exit 0
+   fi
+@@ -70,9 +76,10 @@ command: |
+     if [ "$proven" = yes ] && [ "$repro_ok" = yes ]; then
+       echo "kept: the repair (check $final with the reproduction, judge $judged; the direct attempt passed test-0, the review failed it)" | tee "$r/keep.txt"
+     else
+-      bash "$w/snapshot.sh" restore "$r" direct
++      bash "$w/snapshot.sh" restore "$r" direct || exit 1
+       why="check ${final:-?}, judge $judged"; [ "$proven" = yes ] && why="$why, and no reproduction to tell them apart"
+-      echo "put back: the direct attempt, which passed test-0 (the repair after the review did not prove better: $why; it is in $r/repair.patch, not applied)" | tee "$r/keep.txt"
++      [ ! -f "$r/repair.patch" ] || why="$why; it is in $r/repair.patch, not applied"
++      echo "put back: the direct attempt, which passed test-0 (the repair after the review did not prove better: $why)" | tee "$r/keep.txt"
+       bash "$w/changes.sh" "$r" > /dev/null
+     fi
+     exit 0
+@@ -80,7 +87,7 @@ command: |
+   if [ "$proven" = yes ]; then
+     echo "kept: the team's work (check $final, judge $judged; the direct attempt's check was ${direct:-?})" | tee "$r/keep.txt"
+   else
+-    bash "$w/snapshot.sh" restore "$r" direct
++    bash "$w/snapshot.sh" restore "$r" direct || exit 1
+     echo "put back: the direct attempt (the team's work did not prove better: check ${final:-?}, judge $judged)" | tee "$r/keep.txt"
+     bash "$w/changes.sh" "$r" > /dev/null
+   fi
 diff --git a/workflows/team-solve/steps/pick.yaml b/workflows/team-solve/steps/pick.yaml
 index 72840b1..b399bd4 100644
 --- a/workflows/team-solve/steps/pick.yaml
@@ -1617,7 +2330,7 @@ index b3f745b..9581b11 100644
    [ -f "$r/notes.md" ] || printf '# Notes, run {{.partition}}\n\n## Solver decision\n\n## Review\n\n## Repair\n' > "$r/notes.md"
    sed -n '/^## Check/,/^## Done when/p' "$r/task.md"
 diff --git a/workflows/team-solve/steps/test-0.yaml b/workflows/team-solve/steps/test-0.yaml
-index b589759..573de1e 100644
+index b589759..220abfa 100644
 --- a/workflows/team-solve/steps/test-0.yaml
 +++ b/workflows/team-solve/steps/test-0.yaml
 @@ -10,7 +10,7 @@ requires:
@@ -1629,6 +2342,15 @@ index b589759..573de1e 100644
    # The clean copy (baseline.yaml) has served the reproduction; it goes.
    [ -d "$r/baseline-tree" ] && git worktree remove --force "$r/baseline-tree" 2>/dev/null
    bash "$w/changes.sh" "$r"
+@@ -26,7 +26,7 @@ command: |
+   if [ -s "$r/changes.diff" ] && { [ "$check" = 0 ] || [ "$check" = 3 ]; }; then status=0; fi
+   printf '%s\n' "$status" > "$r/direct-status.txt"
+   # The direct attempt as it is, for the net (keep.yaml).
+-  bash "$w/snapshot.sh" save "$r" direct
++  bash "$w/snapshot.sh" save "$r" direct || exit 1
+   tail -20 "$r/direct-check.log"
+   printf 'direct attempt: %s (check %s, scope %s, %s lines changed)\n' "$([ $status = 0 ] && echo passes || echo 'does not pass: the team takes over')" "$check" "$scope" "$(wc -l < "$r/changes.diff" | tr -d ' ')"
+ timeout: 30m
 diff --git a/workflows/team-solve/steps/test.yaml b/workflows/team-solve/steps/test.yaml
 index cdc2702..0773575 100644
 --- a/workflows/team-solve/steps/test.yaml
@@ -1643,15 +2365,129 @@ index cdc2702..0773575 100644
    bash "$w/check.sh" "$r" "$r/test-output.log"
    result=$?
 diff --git a/workflows/team-solve/steps/verify.yaml b/workflows/team-solve/steps/verify.yaml
-index 5b9bf94..b2af905 100644
+index 5b9bf94..261d02a 100644
 --- a/workflows/team-solve/steps/verify.yaml
 +++ b/workflows/team-solve/steps/verify.yaml
-@@ -6,7 +6,7 @@ requires:
+@@ -6,7 +6,8 @@ requires:
    - table_pattern: keep
  command: |
    r=.memdoor/runs/team-solve-{{.partition}}
 -  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="$HOME/.memdoor/workflows/team-solve"
 +  w=.memdoor/workflows/team-solve; [ -d "$w" ] || w="${MEMDOOR_OPENBOT_STATE_DIR:-$HOME/.memdoor}/workflows/team-solve"
++  if [ "${MEMDOOR_OPENBOT_TEAM:-}" = 1 ]; then bash "$r/done.sh" delivery "$r" || exit 1; fi
    [ -d "$r/baseline-tree" ] && git worktree remove --force "$r/baseline-tree" 2>/dev/null
    bash "$w/changes.sh" "$r"
    bash "$w/check.sh" "$r" "$r/final-check.log"
+diff --git a/workflows/team_solve_keep_test.go b/workflows/team_solve_keep_test.go
+index 320a25d..894efbb 100644
+--- a/workflows/team_solve_keep_test.go
++++ b/workflows/team_solve_keep_test.go
+@@ -167,3 +167,60 @@ func TestTeamSolveKeepHoldsTheRepairToTheSameProof(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestOpenBotTeamKeepRestoresTheSelectedNonGitReply(t *testing.T) {
++	repo, err := filepath.Abs("..")
++	if err != nil {
++		t.Fatal(err)
++	}
++	raw, err := os.ReadFile("team-solve/steps/keep.yaml")
++	if err != nil {
++		t.Fatal(err)
++	}
++	var step struct {
++		Command string `yaml:"command"`
++	}
++	if err := yaml.Unmarshal(raw, &step); err != nil {
++		t.Fatal(err)
++	}
++	keep := strings.ReplaceAll(step.Command, "{{.partition}}", "openbot-keep")
++	for _, scenario := range []string{"plain", "unborn", "changed artifact", "missing checkpoint", "interrupted repair"} {
++		t.Run(scenario, func(t *testing.T) {
++			cmd := exec.Command("bash", "-ec", `
++				if [ "$2" = unborn ]; then git init -q; fi
++				w="$1/workflows/team-solve"; r=.memdoor/runs/team-solve-openbot-keep
++				mkdir -p "$r/reply"; touch "$r/start"
++				printf 'original' > report.txt
++				printf 'direct answer\n<!-- openbot-artifacts: openbot-keep\nreport.txt\n-->\n' > "$r/reply/answer.md"
++				echo 0 > "$r/direct-status.txt"
++				bash "$w/snapshot.sh" save "$r" direct
++				echo 'rejected answer' > "$r/reply/answer.md"
++				echo 1 > "$r/final-status.txt"
++				echo '{"pass":false}' > "$r/judge-score.json"
++				echo '{"pass":false}' > "$r/review-score.json"
++				if [ "$2" != 'interrupted repair' ]; then echo repair > "$r/repair.md"; fi
++				case "$2" in
++				'changed artifact') printf 'replaced' > report.txt ;;
++				'missing checkpoint') rm -- "$r/direct.answer.md" ;;
++				esac
++				if sh -c "$3"; then code=0; else code=$?; fi
++				case "$2" in
++				'changed artifact'|'missing checkpoint')
++					test "$code" != 0
++					test ! -e "$r/keep.txt" ;;
++				*)
++					test "$code" = 0
++					grep -q '^put back: the direct attempt' "$r/keep.txt"
++					grep -qx 'direct answer' "$r/reply/answer.md"
++					grep -qx 'report.txt' "$r/reply/answer.md"
++					grep -qx original report.txt ;;
++				esac
++			`, "test", filepath.ToSlash(repo), scenario, keep)
++			cmd.Dir = t.TempDir()
++			cmd.Env = append(os.Environ(), "MEMDOOR_OPENBOT_TEAM=1", "MEMDOOR_OPENBOT_STATE_DIR="+filepath.ToSlash(repo))
++			if out, err := cmd.CombinedOutput(); err != nil {
++				t.Fatalf("keep: %v\n%s", err, out)
++			}
++		})
++	}
++}
+diff --git a/workflows/team_solve_pick_test.go b/workflows/team_solve_pick_test.go
+index 40edcad..0146faf 100644
+--- a/workflows/team_solve_pick_test.go
++++ b/workflows/team_solve_pick_test.go
+@@ -112,3 +112,43 @@ func TestTeamSolvePickTakesTheAttemptTheOthersChecksPass(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestOpenBotTeamSnapshotsTheReplyWithTheAttempt(t *testing.T) {
++	wf, err := filepath.Abs("team-solve")
++	if err != nil {
++		t.Fatal(err)
++	}
++	cmd := exec.Command("bash", "-ec", `
++		r=.memdoor/runs/team-solve-openbot-fixture
++		mkdir -p "$r/reply"
++		git init -q
++		printf '.memdoor/\n' > .gitignore
++		echo 'stale root answer' > answer.md
++		git add answer.md .gitignore
++		git -c user.name=t -c user.email=t@t commit -qm baseline
++		git rev-parse HEAD > "$r/base.txt"
++		touch "$r/start" "$r/untracked-before.txt"
++		if bash "$1/done.sh" delivery "$r"; then exit 1; fi
++		printf 'first\n<!-- openbot-artifacts: openbot-fixture\nanswer.md\n-->\n' > "$r/reply/answer.md"
++		bash "$1/done.sh" delivery "$r"
++		bash "$1/snapshot.sh" save "$r" a
++		bash "$1/snapshot.sh" reset "$r"
++		test ! -e "$r/reply/answer.md"
++		echo second > "$r/reply/answer.md"
++		bash "$1/snapshot.sh" save "$r" b
++		bash "$1/snapshot.sh" restore "$r" a
++		grep -qx first "$r/reply/answer.md"
++		grep -qx answer.md "$r/reply/answer.md"
++		bash "$1/snapshot.sh" restore "$r" b
++		grep -qx second "$r/reply/answer.md"
++		test "$(cat "$r/reply/answer.md")" = second
++		bash "$1/changes.sh" "$r"
++		grep -qx second "$r/changes.diff"
++		test -z "$(git status --porcelain)"
++	`, "test", filepath.ToSlash(wf))
++	cmd.Dir = t.TempDir()
++	cmd.Env = append(os.Environ(), "MEMDOOR_OPENBOT_TEAM=1")
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("snapshot: %v\n%s", err, out)
++	}
++}

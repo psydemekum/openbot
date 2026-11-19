@@ -508,11 +508,13 @@ export class ThreadLifecycle {
     this: ThreadLifecycle,
     owner: AgentSummary,
     client: AgentClient,
-    routineThreadId?: string,
+    routineThreadId: string | undefined,
+    includeChatHistory: boolean,
   ) {
     const chatThreadId = yield* this.#store.ensureThreadId(owner.id).pipe(toThreadOperationFailed);
     const publicThreadId = routineThreadId ?? chatThreadId;
     const handoff = yield* threadStep(() => {
+      if (!includeChatHistory) return null;
       const names = agentNamesById(this.#store.list());
       const chat = readHandoffHistory(this.#store.database, owner.id, chatThreadId, names);
       const earlierRuns = routineThreadId
