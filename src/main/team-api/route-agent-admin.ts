@@ -45,12 +45,6 @@ import { HttpError } from "./http-error";
 import type { RouteOutcome, TeamApiRequestContext } from "./request-context";
 import { readJson, requireAdmin, requireAgentLevel, requireVisibleBodyAgent, stringField } from "./request-helpers";
 
-/**
- * Access and auto-approve of one agent, changed from a joined server. Together they are the agent's
- * Permissions level, which decides what the agent may do on this computer, so only an owner or admin
- * can read or change them. `autoApproveLocked` is always false now that Turbo mode is gone; the
- * field stays because released clients read it. Frozen by `agent-admin-v1`.
- */
 export async function routeAgentAdmin(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -64,7 +58,6 @@ export async function routeAgentAdmin(
   if (!settings || !capabilities.has(AGENT_ADMIN_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
   requireAdmin(member);
-  // `readJson` has already run the body through the agent-admin wire codec.
   const body = await readJson(request);
   requireVisibleBodyAgent(body, hiddenAgentIds);
   try {
@@ -104,12 +97,6 @@ export async function routeMemdoorTeam(
   return json(200, await runCauseEffect(settings.save(body)));
 }
 
-/**
- * Computer Use, local scripts and the busy-message mode of one agent, changed from a joined server.
- * Each one acts only on this computer, so only an owner or admin can read or change them. The app
- * default for a busy message stays a local choice: the route reports it and cannot change it.
- * Frozen by `agent-host-settings-v1`.
- */
 export async function routeAgentHostSettings(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -123,7 +110,6 @@ export async function routeAgentHostSettings(
   if (!settings || !capabilities.has(AGENT_HOST_SETTINGS_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
   requireAdmin(member);
-  // `readJson` has already run the body through the agent-host-settings wire codec.
   const body = await readJson(request);
   requireVisibleBodyAgent(body, hiddenAgentIds);
   try {
@@ -141,11 +127,6 @@ export async function routeAgentHostSettings(
   }
 }
 
-/**
- * The backup models of one agent, changed from a joined server. They decide which of this computer's
- * providers and accounts the agent moves to at a usage limit, so only an owner or admin can read or
- * change them. Frozen by `agent-backup-models-v1`.
- */
 export async function routeAgentBackupModels(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -159,14 +140,12 @@ export async function routeAgentBackupModels(
   if (!settings || !capabilities.has(AGENT_BACKUP_MODELS_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
   requireAdmin(member);
-  // `readJson` has already run the body through the agent-backup-models wire codec.
   const body = await readJson(request);
   requireVisibleBodyAgent(body, hiddenAgentIds);
   try {
     if (read) return json(200, settings.readBackupModels(stringField(body, "agentId")));
     let input: ReturnType<typeof parseUpdateAgentBackupModelsInput>;
     try {
-      // The wire takes any provider id; this computer refuses one it does not know.
       input = parseUpdateAgentBackupModelsInput(body);
     } catch (error) {
       throw new HttpError(400, error instanceof Error ? error.message : "Invalid backup models.");
@@ -178,11 +157,6 @@ export async function routeAgentBackupModels(
   }
 }
 
-/**
- * How many tasks of one agent run a turn at the same time, changed from a joined server. It decides
- * how much work the agent puts on this computer, so only an owner or admin can read or change it.
- * Frozen by `agent-task-limit-v1`.
- */
 export async function routeAgentTaskLimit(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -196,7 +170,6 @@ export async function routeAgentTaskLimit(
   if (!settings || !capabilities.has(AGENT_TASK_LIMIT_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
   requireAdmin(member);
-  // `readJson` has already run the body through the agent-task-limit wire codec.
   const body = await readJson(request);
   requireVisibleBodyAgent(body, hiddenAgentIds);
   try {
@@ -214,11 +187,6 @@ export async function routeAgentTaskLimit(
   }
 }
 
-/**
- * Whether one agent may start a new chat itself when its chat gets long, changed from a joined
- * server. The agent then works on this computer without the earlier chat, so only an owner or admin
- * can read or change it. Frozen by `agent-new-chat-v1`.
- */
 export async function routeAgentNewChat(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -232,7 +200,6 @@ export async function routeAgentNewChat(
   if (!settings || !capabilities.has(AGENT_NEW_CHAT_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
   requireAdmin(member);
-  // `readJson` has already run the body through the agent-new-chat wire codec.
   const body = await readJson(request);
   requireVisibleBodyAgent(body, hiddenAgentIds);
   try {
@@ -250,11 +217,6 @@ export async function routeAgentNewChat(
   }
 }
 
-/**
- * Whether one agent shows its plan card before a long task, changed from a joined server. It is an
- * agent setting of this computer, like the other host settings, so only an owner or admin can read
- * or change it. Frozen by `agent-plan-card-v1`.
- */
 export async function routeAgentPlanCard(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -268,7 +230,6 @@ export async function routeAgentPlanCard(
   if (!settings || !capabilities.has(AGENT_PLAN_CARD_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
   requireAdmin(member);
-  // `readJson` has already run the body through the agent-plan-card wire codec.
   const body = await readJson(request);
   requireVisibleBodyAgent(body, hiddenAgentIds);
   try {
@@ -286,11 +247,6 @@ export async function routeAgentPlanCard(
   }
 }
 
-/**
- * Whether one agent asks for the fast service tier, and the models of this computer that have one.
- * A member reads it with view access to the agent and changes it with manage access, as the member
- * changes its model and reasoning effort on the released agent route. Frozen by `agent-fast-mode-v1`.
- */
 export async function routeAgentFastMode(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -304,12 +260,10 @@ export async function routeAgentFastMode(
   const settings = admin?.agentHost;
   if (!settings || !capabilities.has(AGENT_FAST_MODE_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
-  // `readJson` has already run the body through the agent-fast-mode wire codec.
   const body = await readJson(request);
   if (models) return json(200, { models: settings.listFastModels() });
   requireVisibleBodyAgent(body, hiddenAgentIds);
   const agentId = stringField(body, "agentId");
-  // The level of the released agent route: reading needs view, a change needs manage.
   requireAgentLevel(context, agentId, read ? "view" : "manage");
   try {
     if (read) return json(200, settings.readFastMode(agentId));
@@ -319,7 +273,6 @@ export async function routeAgentFastMode(
     } catch (error) {
       throw new HttpError(400, error instanceof Error ? error.message : "Invalid fast mode setting.");
     }
-    // The frozen route sets only Fast. A change of it turns Ultrafast off, as a Fast choice in the picker.
     return json(
       200,
       await runCauseEffect(settings.updateFastMode({ agentId: input.agentId, fastMode: input.fastMode })),
@@ -330,11 +283,6 @@ export async function routeAgentFastMode(
   }
 }
 
-/**
- * The speed of one agent (standard, fast or ultrafast), and the models of this computer that have a
- * fast tier, with their Ultrafast tiers and the Claude models. The access is that of
- * `agent-fast-mode-v1`. Frozen by `agent-speed-v1`.
- */
 export async function routeAgentSpeed(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -348,12 +296,10 @@ export async function routeAgentSpeed(
   const settings = admin?.agentHost;
   if (!settings || !capabilities.has(AGENT_SPEED_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
-  // `readJson` has already run the body through the agent-speed wire codec.
   const body = await readJson(request);
   if (models) return json(200, { models: settings.listSpeedModels() });
   requireVisibleBodyAgent(body, hiddenAgentIds);
   const agentId = stringField(body, "agentId");
-  // The level of the released agent route: reading needs view, a change needs manage.
   requireAgentLevel(context, agentId, read ? "view" : "manage");
   try {
     if (read) return json(200, settings.readSpeed(agentId));
@@ -370,10 +316,6 @@ export async function routeAgentSpeed(
   }
 }
 
-/**
- * The models of this computer whose custom agent takes a message into its running turn. Every member
- * reads it: it holds no more than the model list. Frozen by `model-steering-v1`.
- */
 export async function routeModelSteering(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -383,21 +325,13 @@ export async function routeModelSteering(
   const settings = admin?.agentHost;
   if (!settings || !capabilities.has(MODEL_STEERING_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.modelVisibilityUnsupported"));
-  // `readJson` runs the empty body through the model-steering wire codec.
   await readJson(request);
   const models = settings.listSteeringModels();
-  // A member does not read a model that the server's model picker hides.
   const visibility = admin?.modelVisibility;
   const listed = visibility ? await runCauseEffect(visibility.picker(models)) : models;
   return json(200, { models: listed.map(({ provider, id }) => ({ provider, id })) });
 }
 
-/**
- * Server Settings › Agents of this computer, changed from a joined server: the agent defaults, the default
- * for a message sent to a busy agent, and which agents follow them. They decide what the agents may
- * do on this computer, so only an owner or admin can read or change them. A hidden agent is not
- * listed and cannot be named. Frozen by `agent-defaults-v1`.
- */
 export async function routeAgentDefaults(
   context: TeamApiRequestContext,
   admin: TeamApiAdmin | undefined,
@@ -412,7 +346,6 @@ export async function routeAgentDefaults(
   if (!settings || !capabilities.has(AGENT_DEFAULTS_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.agentSettingsUnsupported"));
   requireAdmin(member);
-  // `readJson` has already run the body through the agent-defaults wire codec.
   const body = await readJson(request);
   const visible = (overview: ReturnType<typeof settings.read>) => ({
     ...overview,

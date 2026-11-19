@@ -25,10 +25,6 @@ const STATUS_CLASS: Record<WorkflowStep["status"], string> = {
   skipped: "text-text-secondary",
 };
 
-/**
- * One step of a run, or a step that ran alone: its status and output. The person approves or declines
- * a step that waits, retries a step that failed, and stops a step that runs.
- */
 export function WorkflowRunStepRow({
   node,
   step,
@@ -47,7 +43,6 @@ export function WorkflowRunStepRow({
   onDecide: (step: WorkflowStep, approved: boolean) => void;
   onRetry: (step: WorkflowStep) => void;
   onStop: (step: WorkflowStep) => void;
-  /** The depth of the path of the step: each path sits one level deeper than its split. */
   depth?: number;
   serverId: string;
 }) {
