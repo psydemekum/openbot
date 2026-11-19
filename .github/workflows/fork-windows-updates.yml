@@ -5,6 +5,10 @@ on:
     - cron: "23 */6 * * *"
   workflow_dispatch:
     inputs:
+      upstream_tag:
+        description: Original release tag for a fork hotfix (blank checks the newest release)
+        type: string
+        default: ""
       revision:
         description: Minimum fork revision (0 selects automatically)
         type: number
@@ -45,6 +49,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FORK_REVISION: ${{ inputs.revision || 0 }}
+          FORK_UPSTREAM_TAG: ${{ inputs.upstream_tag }}
           FORK_PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -64,7 +69,12 @@ jobs:
               $_.assets.name -contains "OpenBot-$($_.tag_name.Substring(1))-x64.exe"
             } | Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
           }
-          $release = Get-LatestWindowsRelease @(Get-Releases $env:UPSTREAM_REPO)
+          $releases = @(Get-Releases $env:UPSTREAM_REPO)
+          if ($env:FORK_UPSTREAM_TAG) {
+            if ($env:FORK_UPSTREAM_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Expected a stable original release tag.' }
+            $releases = @($releases | Where-Object tag_name -CEQ $env:FORK_UPSTREAM_TAG)
+          }
+          $release = Get-LatestWindowsRelease $releases
           if (-not $release) { throw 'No stable Windows desktop release found.' }
           $original = [version]$release.tag_name.Substring(1)
           $requestedRevision = 0
