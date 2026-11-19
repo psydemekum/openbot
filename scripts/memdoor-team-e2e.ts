@@ -29,6 +29,7 @@ try {
         }),
     },
     openAIEnvironment: () => ({ OPENAI_API_KEY: providerKey, OPENAI_BASE_URL: "https://api.openai.com/v1" }),
+    openAIVaultKey: () => "sk-fixture-vault",
   };
   const team = createMemdoorTeam(teamOptions);
   await Effect.runPromise(team.load());
@@ -36,6 +37,11 @@ try {
   assert.equal(team.read().decisionModel, MEMDOOR_DECISION_MODEL);
   assert.equal(team.read().hasApiKey, true);
   assert.equal(team.config().env.find(({ name }) => name === "OPENAI_API_KEY")?.value, providerKey);
+  const vaultTeam = createMemdoorTeam({
+    ...teamOptions,
+    openAIEnvironment: () => ({ OPENAI_API_KEY: providerKey, OPENAI_BASE_URL: "https://example.invalid/v1" }),
+  });
+  assert.equal(vaultTeam.apiKey(), "sk-fixture-vault");
   const saved = await Effect.runPromise(
     team.save({
       agentId: MEMDOOR_AGENT_ID,

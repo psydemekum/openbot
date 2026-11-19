@@ -22,6 +22,7 @@ export interface MemdoorTeamOptions {
   profile: string;
   credentials: Pick<ProviderCredentialStore, "secret" | "setSecrets">;
   openAIEnvironment: () => Readonly<Record<string, string | undefined>>;
+  openAIVaultKey: () => string | undefined;
 }
 
 function gitShellPath(platform: NodeJS.Platform, environment: NodeJS.ProcessEnv): string | undefined {
@@ -37,7 +38,13 @@ function gitShellPath(platform: NodeJS.Platform, environment: NodeJS.ProcessEnv)
   return [shell, join(dirname(dirname(shell)), "cmd"), path].join(delimiter);
 }
 
-export function createMemdoorTeam({ executable, profile, credentials, openAIEnvironment }: MemdoorTeamOptions) {
+export function createMemdoorTeam({
+  executable,
+  profile,
+  credentials,
+  openAIEnvironment,
+  openAIVaultKey,
+}: MemdoorTeamOptions) {
   const settingsPath = join(profile, "memdoor-team.json");
   const settings = new PreferenceStore<MemdoorTeamConfig>({
     path: settingsPath,
@@ -59,7 +66,8 @@ export function createMemdoorTeam({ executable, profile, credentials, openAIEnvi
       ...openAIEnvironment(),
     };
     const endpoint = env.OPENAI_BASE_URL?.trim().replace(/\/+$/u, "");
-    return endpoint && endpoint !== "https://api.openai.com/v1" ? "" : (env.OPENAI_API_KEY?.trim() ?? "");
+    const hostKey = !endpoint || endpoint === "https://api.openai.com/v1" ? env.OPENAI_API_KEY?.trim() : undefined;
+    return hostKey || openAIVaultKey()?.trim() || "";
   };
   const read = (): MemdoorTeamSettings => ({ ...settings.get(), hasApiKey: Boolean(apiKey()), runtime: runtime() });
   const save = (input: SaveMemdoorTeamSettings) =>
@@ -102,7 +110,7 @@ export function createMemdoorTeam({ executable, profile, credentials, openAIEnvi
       usagePrompt: null,
     };
   };
-  return { config, load: () => settings.load(), read, save };
+  return { apiKey, config, load: () => settings.load(), read, save };
 }
 
 export type MemdoorTeam = ReturnType<typeof createMemdoorTeam>;

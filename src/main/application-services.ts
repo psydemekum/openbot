@@ -135,6 +135,7 @@ import {
   latestTurnAnswer,
 } from "@openbot/contracts/ipc";
 import { decodeRecord, requiredString } from "@openbot/contracts/ipc-decoding";
+import { MEMDOOR_AGENT_ID, MEMDOOR_RUNTIME_ID } from "@openbot/contracts/ipc-memdoor";
 import { isValidSemver } from "@openbot/contracts/release-version";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { localeDirection } from "@openbot/i18n";
@@ -1889,31 +1890,9 @@ export async function createApplicationServices({
         ),
       ),
       Effect.tap(() => Effect.sync(() => service.notifyProviderSettingsChanged())),
-      Effect.asVoid,
+      Effect.andThen(Effect.suspend(() => (provider === "codex" ? reloadMemdoorCredential() : Effect.void))),
     ),
   );
-  const memdoorTeam = createMemdoorTeam({
-    executable: join(
-      app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build"),
-      "memdoor",
-      process.platform === "win32" ? "memdoor.exe" : "memdoor",
-    ),
-    profile: app.getPath("userData"),
-    credentials: providerCredentials,
-    openAIEnvironment: () => providerEnvironmentSetting.resolve("codex"),
-  });
-  await Effect.runPromise(
-    memdoorTeam
-      .load()
-      .pipe(Effect.catch(() => Effect.sync(() => logger.warn("Could not load the managed Memdoor team settings.")))),
-  );
-  if (memdoorTeam.read().runtime !== "missing") {
-    await Effect.runPromise(
-      store
-        .ensureMemdoorAgent()
-        .pipe(Effect.catch(() => Effect.sync(() => logger.warn("Could not provision the managed Memdoor agent.")))),
-    );
-  }
   /*
    * The MCP sign-ins, in their own file with the same cipher. `mcp-remote` used to keep these where
    * OpenBot could not redact them; here they are covered by the same rule as every other secret.
@@ -2060,6 +2039,45 @@ export async function createApplicationServices({
     canPersist: secretCipher.canPersist,
   });
   await Effect.runPromise(vault.load());
+  const memdoorTeam = createMemdoorTeam({
+    executable: join(
+      app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build"),
+      "memdoor",
+      process.platform === "win32" ? "memdoor.exe" : "memdoor",
+    ),
+    profile: app.getPath("userData"),
+    credentials: providerCredentials,
+    openAIEnvironment: () => providerEnvironmentSetting.resolve("codex"),
+    openAIVaultKey: () => vault.items.apiKeys(MEMDOOR_AGENT_ID).find(({ name }) => name === "OPENAI_API_KEY")?.value,
+  });
+  await Effect.runPromise(
+    memdoorTeam
+      .load()
+      .pipe(Effect.catch(() => Effect.sync(() => logger.warn("Could not load the managed Memdoor team settings.")))),
+  );
+  const memdoorManaged = memdoorTeam.read().runtime !== "missing";
+  if (memdoorManaged) {
+    await Effect.runPromise(
+      store
+        .ensureMemdoorAgent()
+        .pipe(Effect.catch(() => Effect.sync(() => logger.warn("Could not provision the managed Memdoor agent.")))),
+    );
+  }
+  let lastMemdoorKey = memdoorTeam.apiKey();
+  const reloadMemdoorCredential = () =>
+    Effect.suspend(() => {
+      if (!memdoorManaged) return Effect.void;
+      const key = memdoorTeam.apiKey();
+      if (key === lastMemdoorKey) return Effect.void;
+      lastMemdoorKey = key;
+      return service
+        .reloadCustomAgents()
+        .pipe(
+          Effect.catch(() =>
+            Effect.sync(() => logger.warn("The Memdoor runtime could not reload its OpenAI credential.")),
+          ),
+        );
+    });
 
   /*
    * The 1Password connection. The browser fills logins from it, so the agent service reads it. The
@@ -2486,7 +2504,7 @@ export async function createApplicationServices({
       customAgents: () =>
         memdoorTeam.read().runtime === "missing"
           ? customAgents.configs()
-          : [...customAgents.configs().filter((config) => config.id !== "memdoor-team"), memdoorTeam.config()],
+          : [...customAgents.configs().filter((config) => config.id !== MEMDOOR_RUNTIME_ID), memdoorTeam.config()],
       // The enabled MCP servers, read at each spawn. The service owns the store, so this reads back
       // into the object being constructed; nothing calls it before the constructor returns.
       mcpServers: () => service.enabledMcpServers(),
@@ -2778,6 +2796,7 @@ export async function createApplicationServices({
   vault.onChanged(() => service.notifyVaultChanged());
   // A changed or deleted Vault API key reaches the file that an agent reads at once.
   vault.onChanged(() => void Effect.runPromise(agentApiKeys.syncVault().pipe(Effect.ignore)));
+  vault.onChanged(() => void Effect.runPromise(reloadMemdoorCredential()));
   // A Discord mention goes to the workflows' Discord triggers before an agent. When the workflows fail to
   // read, the agent answers it, as it did before the trigger.
   service.messaging.setMentionHandler((mention) =>
@@ -3265,15 +3284,14 @@ export async function createApplicationServices({
   const memdoorTeamSettings: Pick<MemdoorTeam, "read" | "save"> = {
     read: memdoorTeam.read,
     save: (input) =>
-      memdoorTeam
-        .save(input)
-        .pipe(
-          Effect.tap(() =>
-            service
-              .reloadCustomAgents()
-              .pipe(Effect.catch(() => Effect.sync(() => logger.warn("The Memdoor runtime could not reload.")))),
-          ),
-        ),
+      memdoorTeam.save(input).pipe(
+        Effect.tap(() => {
+          lastMemdoorKey = memdoorTeam.apiKey();
+          return service
+            .reloadCustomAgents()
+            .pipe(Effect.catch(() => Effect.sync(() => logger.warn("The Memdoor runtime could not reload."))));
+        }),
+      ),
   };
   const agentDefaultsSettings = createAgentDefaultsSettings({ agents: service, agentDefaults, busyMessageMode });
   const agentFolders = createAgentFolders({ service, userDataPath: app.getPath("userData") });

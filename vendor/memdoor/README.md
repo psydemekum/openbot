@@ -5,8 +5,9 @@ Select it in a chat or in an OpenBot workflow agent step. Use **Agent settings â
 to change the models and to add a model, reasoning effort or instructions for any of the ten roles.
 
 The defaults are `gpt-6.2-sol` for the team and `gpt-6-luna` for decisions. The executing host
-uses its configured official OpenAI API key. A dedicated key entered in the local Memdoor settings
-takes precedence. Role settings can also be changed by a connected web or desktop administrator.
+tries the dedicated key from the local Memdoor settings first, then the official OpenAI key
+configured in the host's Codex environment, then an `OPENAI_API_KEY` shared with Multi-Agent in
+the Vault. Role settings can also be changed by a connected web or desktop administrator.
 Enter credentials on the Windows host.
 
 Windows needs Git for Windows with Git Bash for Memdoor's workspace tasks. The worker runs with
