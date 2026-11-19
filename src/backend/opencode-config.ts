@@ -92,12 +92,12 @@ const OPENCODE_ANTHROPIC_NPM = "@ai-sdk/anthropic";
 
 const OPENCODE_OPENAI_NPM = "@ai-sdk/openai";
 
-function anthropicBaseUrl(baseUrl: string): string | null {
+export function anthropicBaseUrl(baseUrl: string): string | null {
   const url = URL.parse(baseUrl);
   return url?.protocol === "https:" && url.hostname === "api.anthropic.com" ? `${url.origin}/v1` : null;
 }
 
-function usesResponsesApi(provider: CustomProviderConfig): boolean {
+export function usesResponsesApi(provider: CustomProviderConfig): boolean {
   const url = URL.parse(provider.baseUrl);
   if (!provider.apiKey || url?.protocol !== "https:") return false;
   if (url.hostname === "api.openai.com") return url.pathname === "/v1" || url.pathname === "/v1/";

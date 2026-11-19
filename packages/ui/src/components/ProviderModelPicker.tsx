@@ -78,7 +78,8 @@ interface ProviderModelPickerProps {
   value: AgentModelId;
   modelOptions: ClientAgentModelOption[];
   agentStatus: AgentStatus;
-  onlyProvider?: AgentProviderId;
+  onlyProvider?: AgentProviderId | undefined;
+  catalogOnly?: boolean;
   variant?: "pill" | "field";
   ariaLabel?: string;
   label?: string;
@@ -171,10 +172,17 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
   let root: HTMLDivElement | undefined;
   let popover: HTMLElement | undefined;
 
+  const customIds = createMemo(() => customProviderIds(props.customProviders ?? []));
+  function railModelOptions(rail: RailId): ClientAgentModelOption[] {
+    if (rail === CUSTOM_RAIL) return props.modelOptions.filter((option) => isCustomModel(option, customIds()));
+    return props.modelOptions.filter((option) => option.provider === rail && !isCustomModel(option, customIds()));
+  }
+
   const visibleProviders = createMemo(() =>
     PROVIDERS.filter(
       (provider) =>
         (props.onlyProvider === undefined || provider === props.onlyProvider) &&
+        (!props.catalogOnly || railModelOptions(provider).length > 0) &&
         (provider === CUSTOM_RAIL || !providerTurnedOff(props.agentStatus, provider)),
     ),
   );
@@ -222,7 +230,6 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
     const id = props.providerAccountId;
     return id && railAccounts(props.provider).some((account) => account.id === id) ? id : null;
   };
-  const customIds = createMemo(() => customProviderIds(props.customProviders ?? []));
   const modelOption = (provider: string, id: string) =>
     findModelOption(props.modelOptions, props.agentStatus?.providers, provider, id);
   const selectedModel = createMemo(() => modelOption(props.provider, props.value));
@@ -238,11 +245,6 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
   };
   const [railProvider, setRailProvider] = createSignal<RailKey>(untrack(activeKey));
   let shownProvider = untrack(activeProvider);
-
-  function railModelOptions(rail: RailId): ClientAgentModelOption[] {
-    if (rail === CUSTOM_RAIL) return props.modelOptions.filter((option) => isCustomModel(option, customIds()));
-    return props.modelOptions.filter((option) => option.provider === rail && !isCustomModel(option, customIds()));
-  }
 
   const agentCount = () => {
     if (!props.agentStatus.providers?.some((item) => item.id === "acp")) return 0;
@@ -361,9 +363,9 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
   };
   const railSummary = (key: RailKey, status: AgentProviderStatus): string => {
     const rail = railOf(key);
-    return rail === CUSTOM_RAIL
-      ? customSummary()
-      : (sourceSummary(key, status) ?? poolSummary(key, status) ?? providerSummary(rail, status, text));
+    if (rail === CUSTOM_RAIL) return customSummary();
+    if (props.catalogOnly) return "";
+    return sourceSummary(key, status) ?? poolSummary(key, status) ?? providerSummary(rail, status, text);
   };
   const railHeadingSummary = (key: RailKey, status: AgentProviderStatus): string => {
     const rail = railOf(key);
@@ -687,6 +689,7 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                     const account = () => entryAccount(key);
                     const status = () => entryStatus(key);
                     const name = () => entryName(key);
+                    const summary = () => railSummary(key, status());
                     return (
                       <Tooltip.Root {...RAIL_TOOLTIP}>
                         <Tooltip.Trigger as="div" class="provider-model-rail-tooltip-trigger">
@@ -702,7 +705,7 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                             ]}
                             data-state={status().state}
                             aria-label={spentLabel(
-                              `${name()}: ${railSummary(key, status())}`,
+                              summary() ? `${name()}: ${summary()}` : name(),
                               status().state === "available" ? entrySpentWindow(key) : undefined,
                             )}
                             onClick={(event) => {
@@ -744,7 +747,7 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                         <Tooltip.Portal>
                           <Tooltip.Content class="provider-model-rail-tooltip">
                             <strong>{name()}</strong>
-                            <small>{railSummary(key, status())}</small>
+                            <Show when={summary()}>{(text) => <small>{text()}</small>}</Show>
                           </Tooltip.Content>
                         </Tooltip.Portal>
                       </Tooltip.Root>
@@ -790,7 +793,9 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                   return id && id !== DEFAULT_PROVIDER_ACCOUNT_ID ? id : null;
                 };
                 const status = () => entryStatus(key);
-                const models = createMemo(() => pickerModels(entryModelOptions(key), props.customProviders));
+                const models = createMemo(() =>
+                  pickerModels(entryModelOptions(key), props.customProviders, !props.catalogOnly),
+                );
                 const endpointModelsElsewhere = () =>
                   provider !== CUSTOM_RAIL &&
                   railModelOptions(CUSTOM_RAIL).some((option) => option.provider === provider);
@@ -1026,11 +1031,13 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                             </Badge>
                           )}
                         </Show>
-                        <span>
-                          {account() && status().state === "available"
-                            ? (account()?.account.email ?? railHeadingSummary(key, status()))
-                            : railHeadingSummary(key, status())}
-                        </span>
+                        <Show when={!props.catalogOnly || provider === CUSTOM_RAIL}>
+                          <span>
+                            {account() && status().state === "available"
+                              ? (account()?.account.email ?? railHeadingSummary(key, status()))
+                              : railHeadingSummary(key, status())}
+                          </span>
+                        </Show>
                       </div>
                       <Show when={provider === CUSTOM_RAIL && !props.onManageProviders && props.onAddCustomProvider}>
                         <Button

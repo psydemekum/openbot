@@ -343,6 +343,7 @@ import {
 } from "./mcp-oauth-redirect-server";
 import { McpOAuthStore } from "./mcp-oauth-store";
 import { MCP_SERVER_OWNERS_FILE, McpServerOwnersStore } from "./mcp-server-owners-store";
+import { createMemdoorModelProviders } from "./memdoor-model-providers";
 import { createMemdoorTeam, type MemdoorTeam } from "./memdoor-team";
 import { MemoryReviewPreferenceStore } from "./memory-review-preference-store";
 import { MessagingCredentialStore } from "./messaging-credential-store";
@@ -1626,7 +1627,6 @@ export async function createApplicationServices({
         ),
       ),
       Effect.tap(() => Effect.sync(() => service.notifyProviderSettingsChanged())),
-      Effect.andThen(Effect.suspend(() => (provider === "codex" ? reloadMemdoorCredential() : Effect.void))),
     ),
   );
   const mcpOAuthStore = new McpOAuthStore(join(app.getPath("userData"), MCP_OAUTH_FILE), secretCipher);
@@ -1746,6 +1746,18 @@ export async function createApplicationServices({
     credentials: providerCredentials,
     openAIEnvironment: () => providerEnvironmentSetting.resolve("codex"),
     openAIVaultKey: () => vault.items.apiKeys(MEMDOOR_AGENT_ID).find(({ name }) => name === "OPENAI_API_KEY")?.value,
+    modelProviders: createMemdoorModelProviders({
+      customProviders: () => customProviders.configs(),
+      providerEnvironment: (provider) => ({
+        ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+        ...providerEnvironmentSetting.resolve(provider),
+      }),
+      providerKey: (provider, variable) =>
+        providerCredentials.get(provider)?.trim() ||
+        process.env[variable]?.trim() ||
+        vault.items.apiKeys(MEMDOOR_AGENT_ID).find(({ name }) => name === variable)?.value,
+      providerOn: (provider) => !providerUse.off().includes(provider),
+    }),
   });
   await Effect.runPromise(
     memdoorTeam
@@ -1760,18 +1772,18 @@ export async function createApplicationServices({
         .pipe(Effect.catch(() => Effect.sync(() => logger.warn("Could not provision the managed Memdoor agent.")))),
     );
   }
-  let lastMemdoorKey = memdoorTeam.apiKey();
-  const reloadMemdoorCredential = () =>
+  let lastMemdoorConnection = memdoorTeam.connectionState();
+  const reloadMemdoorConnection = () =>
     Effect.suspend(() => {
       if (!memdoorManaged) return Effect.void;
-      const key = memdoorTeam.apiKey();
-      if (key === lastMemdoorKey) return Effect.void;
-      lastMemdoorKey = key;
+      const connection = memdoorTeam.connectionState();
+      if (connection === lastMemdoorConnection) return Effect.void;
+      lastMemdoorConnection = connection;
       return service
         .reloadCustomAgents()
         .pipe(
           Effect.catch(() =>
-            Effect.sync(() => logger.warn("The Memdoor runtime could not reload its OpenAI credential.")),
+            Effect.sync(() => logger.warn("The Memdoor runtime could not reload its model connections.")),
           ),
         );
     });
@@ -2362,7 +2374,10 @@ export async function createApplicationServices({
   service.armRoutines();
   vault.onChanged(() => service.notifyVaultChanged());
   vault.onChanged(() => void Effect.runPromise(agentApiKeys.syncVault().pipe(Effect.ignore)));
-  vault.onChanged(() => void Effect.runPromise(reloadMemdoorCredential()));
+  vault.onChanged(() => void Effect.runPromise(reloadMemdoorConnection()));
+  service.on("event", (event) => {
+    if (event.type === "status") void Effect.runPromise(reloadMemdoorConnection());
+  });
   service.messaging.setMentionHandler((mention) =>
     workflowRuntime.receiveDiscord(mention).pipe(
       Effect.catch((failure) =>
@@ -2760,10 +2775,10 @@ export async function createApplicationServices({
   const agentHostSettings = createAgentHostSettings({ agents: service, busyMessageMode, agentDefaults });
   const memdoorTeamSettings: Pick<MemdoorTeam, "read" | "save"> = {
     read: memdoorTeam.read,
-    save: (input) =>
-      memdoorTeam.save(input).pipe(
+    save: (input, options) =>
+      memdoorTeam.save(input, options).pipe(
         Effect.tap(() => {
-          lastMemdoorKey = memdoorTeam.apiKey();
+          lastMemdoorConnection = memdoorTeam.connectionState();
           return service
             .reloadCustomAgents()
             .pipe(Effect.catch(() => Effect.sync(() => logger.warn("The Memdoor runtime could not reload."))));

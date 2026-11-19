@@ -125,6 +125,7 @@ import {
   MCP_SIGN_IN_APP_CAPABILITY,
   MCP_SIGN_IN_CAPABILITY,
   MEMDOOR_TEAM_CAPABILITY,
+  MEMDOOR_TEAM_MODEL_SOURCES_CAPABILITY,
   MEMORY_REVIEW_CAPABILITY,
   MODEL_VISIBILITY_CAPABILITY,
   ONEPASSWORD_CONNECTOR_CAPABILITY,
@@ -2669,7 +2670,8 @@ export class TeamApiServer {
         if (capability === AGENT_THREAD_BRANCHES_CAPABILITY) return this.#options.agentTasks !== undefined;
         if (capability === AGENT_THREAD_PAGES_CAPABILITY) return this.#options.agentTasks !== undefined;
         if (capability === AGENT_HOST_SETTINGS_CAPABILITY) return this.#options.admin?.agentHost !== undefined;
-        if (capability === MEMDOOR_TEAM_CAPABILITY) return this.#options.admin?.memdoorTeam !== undefined;
+        if (capability === MEMDOOR_TEAM_CAPABILITY || capability === MEMDOOR_TEAM_MODEL_SOURCES_CAPABILITY)
+          return this.#options.admin?.memdoorTeam !== undefined;
         if (capability === AGENT_BACKUP_MODELS_CAPABILITY) return this.#options.admin?.agentHost !== undefined;
         if (capability === AGENT_TASK_LIMIT_CAPABILITY) return this.#options.admin?.agentHost !== undefined;
         if (capability === AGENT_NEW_CHAT_CAPABILITY) return this.#options.admin?.agentHost !== undefined;

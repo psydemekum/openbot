@@ -48,10 +48,10 @@ index 866af1a..39594cb 100644
  // option a choice; the editor's cancel is "".
 diff --git a/cmd/cli/cmd/acp_openbot_team.go b/cmd/cli/cmd/acp_openbot_team.go
 new file mode 100644
-index 0000000..ad754b9
+index 0000000..82632a7
 --- /dev/null
 +++ b/cmd/cli/cmd/acp_openbot_team.go
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,414 @@
 +package cmd
 +
 +import (
@@ -72,6 +72,7 @@ index 0000000..ad754b9
 +
 +	"github.com/coder/acp-go-sdk"
 +	"memdoor/gateway"
++	"memdoor/gateway/providers"
 +)
 +
 +func serveOpenBotACP(ctx context.Context) error {
@@ -83,9 +84,9 @@ index 0000000..ad754b9
 +	os.Stdout = os.Stderr
 +	ctx, cancel := context.WithCancel(ctx)
 +	defer cancel()
-+	managed := &openBotGateway{ctx: ctx}
++	managed := &openBotGateway{ctx: ctx, providerConfigErr: providers.LoadOpenBotProviders()}
 +	agent := newACPAgent(&openBotTeamRunner{
-+		post: managed.post, model: "openai:" + os.Getenv("MEMDOOR_MODEL"), interval: time.Second,
++		post: managed.post, model: os.Getenv("MEMDOOR_MODEL"), interval: time.Second,
 +	})
 +	agent.reportTurnError = true
 +	conn := acp.NewAgentSideConnection(agent, out, os.Stdin)
@@ -95,9 +96,10 @@ index 0000000..ad754b9
 +}
 +
 +type openBotGateway struct {
-+	ctx context.Context
-+	mu  sync.Mutex
-+	c   *Client
++	ctx               context.Context
++	mu                sync.Mutex
++	c                 *Client
++	providerConfigErr error
 +}
 +
 +func (g *openBotGateway) post(path string, body interface{}, response interface{}) error {
@@ -117,11 +119,17 @@ index 0000000..ad754b9
 +	if g.c != nil {
 +		return g.c, nil
 +	}
++	if g.providerConfigErr != nil {
++		return nil, g.providerConfigErr
++	}
 +	if strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) == "" {
 +		return nil, errors.New("Set an OpenAI API key for the Memdoor team in OpenBot settings")
 +	}
 +	if strings.TrimSpace(os.Getenv("MEMDOOR_MODEL")) == "" {
 +		return nil, errors.New("OpenBot did not configure a model for the Memdoor team")
++	}
++	if _, err := providers.OpenBotModelPin(os.Getenv("MEMDOOR_MODEL")); err != nil {
++		return nil, err
 +	}
 +	if runtime.GOOS == "windows" {
 +		for _, name := range []string{"git.exe", "sh.exe", "bash.exe"} {
@@ -242,10 +250,7 @@ index 0000000..ad754b9
 +			return nil
 +		case "failed", "stopped":
 +			terminal = true
-+			if status.Error == "" {
-+				return fmt.Errorf("Memdoor team %s", status.State)
-+			}
-+			return fmt.Errorf("Memdoor team %s: %s", status.State, status.Error)
++			return openBotTeamFailure(cwd, partition, status)
 +		case "waiting":
 +			if gate := waitingGate(status); gate != "" && gate != lastGate {
 +				if sink.Ask("Approve Memdoor team step "+gate+"?", []string{"Yes", "No"}, "workflow") != "Yes" {
@@ -275,6 +280,48 @@ index 0000000..ad754b9
 +	}
 +}
 +
++func openBotTeamFailure(cwd, partition string, status workflowRunStatus) error {
++	message := "Memdoor team " + status.State
++	detail := strings.TrimSpace(status.Error)
++	if status.State == "failed" && detail == "" {
++		for _, task := range status.Tasks {
++			if task.State != "failed" || task.Optional {
++				continue
++			}
++			message += fmt.Sprintf(" at step %q", task.Name)
++			detail = task.Error
++			if task.Name == "verify" {
++				if verdict := openBotFailureVerdict(cwd, partition); verdict != "" {
++					detail = verdict
++				}
++			}
++			break
++		}
++	}
++	if detail = strings.ToValidUTF8(oneLineText(detail, 1400), ""); detail != "" {
++		message += ". " + detail
++	}
++	return errors.New(message)
++}
++
++func openBotFailureVerdict(cwd, partition string) string {
++	root, err := os.OpenRoot(cwd)
++	if err != nil {
++		return ""
++	}
++	defer root.Close()
++	path := filepath.Join(filepath.Dir(openBotReplyDir(partition)), "verdict.md")
++	data, err := readOpenBotResult(root, path, 8192)
++	if err != nil || !utf8.Valid(data) {
++		return ""
++	}
++	verdict, reason, _ := strings.Cut(string(data), "\n")
++	if strings.TrimSpace(verdict) != "verdict: FAIL" {
++		return ""
++	}
++	return strings.TrimSpace(reason)
++}
++
 +// The native workflow snapshots the reply with each attempt.
 +func openBotReplyDir(partition string) string {
 +	return filepath.Join(".memdoor", "runs", "team-solve-"+partition, "reply")
@@ -287,7 +334,8 @@ index 0000000..ad754b9
 +		"For a text-only request this reply is the sole deliverable. Put the actual answer there in the requested language and format. " +
 +		"For project work, do the work and describe the verified result there. " +
 +		"Each time you write the reply, replace the whole file. Keep workflow notes and verdicts out of it. " +
-+		"When the user wants files, append this Markdown comment at the end, replacing the example with the finished project-relative paths, one per line. " +
++		"When the user wants files or a link to a local deliverable, append this Markdown comment using the finished project-relative paths, one per line. " +
++		"Only promise a public URL if publishing was requested and succeeded. A clickable local file is sufficient for a preview. " +
 +		"OpenBot removes this comment and links the files. For a text-only answer omit the comment.\n" +
 +		openBotArtifactHeader(partition) + "\npath/to/finished-file.pdf\n-->"
 +}
@@ -420,10 +468,10 @@ index 0000000..ad754b9
 +}
 diff --git a/cmd/cli/cmd/acp_openbot_team_test.go b/cmd/cli/cmd/acp_openbot_team_test.go
 new file mode 100644
-index 0000000..7c070a6
+index 0000000..51a2a68
 --- /dev/null
 +++ b/cmd/cli/cmd/acp_openbot_team_test.go
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,306 @@
 +package cmd
 +
 +import (
@@ -480,6 +528,44 @@ index 0000000..7c070a6
 +type openBotTestSink struct {
 +	output []string
 +	ask    string
++}
++
++func TestOpenBotTeamReportsTheRequiredStepAndVerdict(t *testing.T) {
++	cwd := t.TempDir()
++	status := workflowRunStatus{
++		ID: "fixture", State: "failed",
++		Tasks: []workflowTaskStatus{
++			{Name: "plan", State: "failed", Optional: true, Error: "optional timeout"},
++			{Name: "verify", State: "failed", Error: "check exited with status 1"},
++		},
++	}
++	post := func(path string, body interface{}, response interface{}) error {
++		if path != "/api/workflow/run" {
++			t.Fatalf("unexpected request %s", path)
++		}
++		partition := body.(map[string]interface{})["partition"].(string)
++		output := filepath.Dir(openBotReplyDir(partition))
++		if err := os.MkdirAll(filepath.Join(cwd, output), 0700); err != nil {
++			return err
++		}
++		if err := os.WriteFile(filepath.Join(cwd, output, "verdict.md"), []byte("verdict: FAIL\nThe dashboard preview link is missing.\n"), 0600); err != nil {
++			return err
++		}
++		*response.(*workflowRunStatus) = status
++		return nil
++	}
++	runner := openBotTeamRunner{post: post, interval: time.Second}
++	sink := &openBotTestSink{}
++	if err := runner.Run(t.Context(), "", cwd, "Show the dashboard", sink); err == nil ||
++		err.Error() != "Memdoor team failed at step \"verify\". The dashboard preview link is missing." {
++		t.Fatalf("unexpected failure %v", err)
++	}
++	if len(sink.output) != 0 {
++		t.Fatal("a failed workflow delivered a successful answer")
++	}
++	if got := openBotTeamFailure(cwd, "missing", status).Error(); !strings.Contains(got, "check exited with status 1") {
++		t.Fatalf("missing fallback detail: %s", got)
++	}
 +}
 +
 +func (s *openBotTestSink) Text(text string)                        { s.output = append(s.output, text) }
@@ -730,6 +816,43 @@ index 0eb4e70..f5b0735 100644
  	if top == rootCmd {
  		// The bare name is the window: it resolves the workspace exactly as
  		// `tui` does (pinned, env, the only one), and a machine with none is
+diff --git a/cmd/cli/cmd/workflow.go b/cmd/cli/cmd/workflow.go
+index 65eb312..65b4aff 100644
+--- a/cmd/cli/cmd/workflow.go
++++ b/cmd/cli/cmd/workflow.go
+@@ -26,6 +26,7 @@ type workflowTaskStatus struct {
+ 	Requires []string   `json:"requires"`
+ 	Target   string     `json:"target"`
+ 	External bool       `json:"external"`
++	Optional bool       `json:"optional,omitempty"`
+ 	State    string     `json:"state"`
+ 	Error    string     `json:"error"`
+ 	Attempt  int        `json:"attempt"`
+diff --git a/gateway/agent_runtime_process.go b/gateway/agent_runtime_process.go
+index 04af850..8d02a4a 100644
+--- a/gateway/agent_runtime_process.go
++++ b/gateway/agent_runtime_process.go
+@@ -5,6 +5,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"log/slog"
++	"os"
+ 	"strconv"
+ 	"strings"
+ 
+@@ -288,7 +289,11 @@ func (ar *AgentRuntime) processMessage(ctx context.Context, userMessage string,
+ 	// the session: it answers again once the key is back.
+ 	pinNote := ""
+ 	if m := sessionModel(session); m != "" {
+-		if why := providers.UnreachablePin(m); why != "" {
++		if os.Getenv("MEMDOOR_OPENBOT_TEAM") == "1" {
++			if _, err := providers.OpenBotModelPin(m); err != nil {
++				return nil, err
++			}
++		} else if why := providers.UnreachablePin(m); why != "" {
+ 			p, _ := providers.SplitPin(m)
+ 			pinNote = "(note: the pinned model " + m + " did not answer — " + why + ". This turn answered on the ladder: memdoor connect " + p + " brings the pin back, /model auto drops it.)"
+ 			logs.New("Agent").Warn("pinned model unreachable, answering on the ladder", slog.String("pin", m), slog.String("why", why), slog.String("session", session.ID))
 diff --git a/gateway/decision_openai_test.go b/gateway/decision_openai_test.go
 new file mode 100644
 index 0000000..c9f0ed9
@@ -903,7 +1026,7 @@ index f7e01a5..d3c502c 100644
  
  func (s *Server) installDecisions(db *sql.DB, messageService *message.Service) {
 diff --git a/gateway/model_engine.go b/gateway/model_engine.go
-index db1d3b4..b6fd00e 100644
+index db1d3b4..5cb4509 100644
 --- a/gateway/model_engine.go
 +++ b/gateway/model_engine.go
 @@ -4,6 +4,7 @@ import (
@@ -914,22 +1037,224 @@ index db1d3b4..b6fd00e 100644
  	"time"
  
  	"memdoor/gateway/logs"
-@@ -58,6 +59,9 @@ func (s *Server) selectModelEngine() {
+@@ -32,13 +33,16 @@ func (s *Server) selectModelEngine() {
+ 	// nothing reaches OpenRouter or memdoor.ai's broker. The one mode a
+ 	// monitored laptop allows (the maintainer, 2026-10-02).
+ 	re, ok, reason := providers.VendorEngine()
+-	if !ok {
++	managed := os.Getenv("MEMDOOR_OPENBOT_TEAM") == "1"
++	if !ok && !managed {
+ 		// No MEMDOOR_MODEL: the model is picked on that vendor (#206), and
+ 		// the vendor key wins over an OpenRouter key in the same shell.
+ 		if id := providers.VendorKeyWithoutModel(); id != "" {
+ 			if model, why := s.pickVendorModel(context.Background(), id); model != "" {
+ 				re, ok, reason = providers.VendorEngineOn(model)
+ 				re.Picked = pickedReason
++			} else if managed {
++				logs.New("Brain").Info("OpenBot team model configured", slog.String("model", re.Model))
+ 			} else {
+ 				reason = why
+ 			}
+@@ -58,6 +62,9 @@ func (s *Server) selectModelEngine() {
  	} else if reason != "" {
  		logs.New("Brain").Warn(reason)
  	}
-+	if os.Getenv("MEMDOOR_OPENBOT_TEAM") == "1" {
++	if managed {
 +		return
 +	}
  	// A SIGNED-IN CHATGPT PLAN NEXT (providers/chatgpt_engine.go): the person
  	// signed in to spend their plan, so it answers before their OpenRouter
  	// key; the decision model and web search still run on that key.
+diff --git a/gateway/openbot_provider_routing_test.go b/gateway/openbot_provider_routing_test.go
+new file mode 100644
+index 0000000..4426728
+--- /dev/null
++++ b/gateway/openbot_provider_routing_test.go
+@@ -0,0 +1,178 @@
++package gateway
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"sync/atomic"
++	"testing"
++
++	"github.com/guregodevo/mario/templates"
++	"memdoor/gateway/providers"
++	"memdoor/internal/testenv"
++	"memdoor/pkg/decision"
++	"memdoor/pkg/workflow"
++)
++
++func setOpenBotConnections(t *testing.T, connections map[string]map[string]any) {
++	t.Helper()
++	raw, err := json.Marshal(connections)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("MEMDOOR_OPENBOT_PROVIDERS", string(raw))
++	t.Cleanup(func() {
++		if err := providers.LoadOpenBotProviders(); err != nil {
++			t.Error(err)
++		}
++	})
++	if err := providers.LoadOpenBotProviders(); err != nil {
++		t.Fatal(err)
++	}
++	if _, ok := os.LookupEnv("MEMDOOR_OPENBOT_PROVIDERS"); ok {
++		t.Fatal("managed provider credentials remain in the command environment")
++	}
++}
++
++func TestOpenBotWorkflowRoutesTeamAndRoleModelsIndependentlyOfDecisions(t *testing.T) {
++	testenv.Home(t)
++	t.Setenv("MEMDOOR_OPENBOT_TEAM", "1")
++	t.Setenv("MEMDOOR_MODEL", "anthropic:shared-model")
++	t.Setenv("MEMDOOR_OPENBOT_DECISION_MODEL", "gpt-6-luna")
++	t.Setenv("OPENAI_API_KEY", "official-openai-key")
++	t.Setenv("OPENAI_BASE_URL", "")
++	type expected struct {
++		host, model, keyHeader, key, tag, reply string
++	}
++	routes := map[string]expected{
++		"/claude/v1/messages":     {"", "shared-model", "X-Api-Key", "claude-key", "claude", `{"id":"test","model":"shared-model","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Claude"}]}`},
++		"/query/chat/completions": {"", "shared-model", "Authorization", "Bearer chat-key", "chat", `{"id":"test","model":"shared-model","choices":[{"message":{"role":"assistant","content":"Chat"},"finish_reason":"stop"}]}`},
++		"/compatible/v1/responses": {"", "raw/model+edge@v1", "", "", "response",
++			`{"id":"test","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Compatible Responses"}]}]}`},
++		"/router/chat/completions": {"", "router-model:free", "Authorization", "Bearer router-key", "router",
++			`{"id":"test","model":"router-model:free","choices":[{"message":{"role":"assistant","content":"OpenRouter"},"finish_reason":"stop"}]}`},
++		"/v1/responses": {"api.openai.com", "gpt-6-luna", "Authorization", "Bearer official-openai-key", "",
++			`{"status":"completed","output":[{"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"{\"answers\":[{\"id\":\"ok\",\"probabilities\":[1]}]}"}]}]}`},
++	}
++	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		want, ok := routes[r.URL.Path]
++		if !ok || r.Method != http.MethodPost {
++			t.Errorf("unexpected request to %s %s", r.Method, r.URL.Path)
++			http.Error(w, "unexpected request", http.StatusBadRequest)
++			return
++		}
++		if (want.host != "" && want.host != r.Host) || r.Header.Get("X-Provider-Tag") != want.tag ||
++			r.Header.Get("Authorization") != map[string]string{"Authorization": want.key}[want.keyHeader] ||
++			r.Header.Get("X-Api-Key") != map[string]string{"X-Api-Key": want.key}[want.keyHeader] {
++			t.Errorf("incorrectly isolated credentials for %s", r.URL.Path)
++		}
++		var body struct {
++			Model           string
++			Reasoning       any
++			ReasoningEffort any `json:"reasoning_effort"`
++		}
++		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model != want.model ||
++			body.Reasoning != nil || body.ReasoningEffort != nil {
++			t.Errorf("unexpected model body for %s: %+v (%v)", r.URL.Path, body, err)
++		}
++		w.Header().Set("Content-Type", "application/json")
++		io.WriteString(w, want.reply)
++	}))
++	defer fixture.Close()
++	originalTransport, originalEngine := http.DefaultTransport, providers.ActiveRemoteEngine()
++	http.DefaultTransport = &http.Transport{
++		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
++			if addr != "api.openai.com:443" {
++				return nil, fmt.Errorf("unexpected HTTPS destination %s", addr)
++			}
++			return (&net.Dialer{}).DialContext(ctx, network, fixture.Listener.Addr().String())
++		},
++	}
++	t.Cleanup(func() {
++		http.DefaultTransport = originalTransport
++		if originalEngine == nil {
++			_ = providers.ClearRemoteEngine()
++		} else {
++			_ = providers.SetRemoteEngine(*originalEngine)
++		}
++	})
++	setOpenBotConnections(t, map[string]map[string]any{
++		"anthropic:shared-model":              {"api": "anthropic", "base": fixture.URL + "/claude/v1", "key": "claude-key", "headers": map[string]string{"X-Provider-Tag": "claude"}, "model": "shared-model", "context": 65536},
++		"custom:shared-model":                 {"api": "chat", "base": fixture.URL + "/query", "key": "chat-key", "headers": map[string]string{"X-Provider-Tag": "chat"}, "model": "shared-model"},
++		"pi:proxy/raw/model:free[route=test]": {"api": "responses", "base": fixture.URL + "/compatible/v1/responses", "key": "", "headers": map[string]string{"X-Provider-Tag": "response"}, "model": "raw/model+edge@v1"},
++		"openrouter:router-model:free":        {"api": "openrouter", "base": fixture.URL + "/router", "key": "router-key", "headers": map[string]string{"X-Provider-Tag": "router"}, "model": "router-model:free"},
++	})
++	s := &Server{clientFactory: providers.NewClientFactory()}
++	s.selectModelEngine()
++	c := workflowCompleter{s: s}
++	for _, tt := range []struct{ pin, reply string }{
++		{"", "Claude"},
++		{"custom:shared-model", "Chat"},
++		{"pi:proxy/raw/model:free[route=test]", "Compatible Responses"},
++		{"openrouter:router-model:free", "OpenRouter"},
++	} {
++		def := &templates.YamlTaskDefinition{Type: "llm"}
++		wf := workflow.Workflow{Defs: map[string]*templates.YamlTaskDefinition{"plan": def}, Tasks: []workflow.Task{{Full: "plan"}}}
++		if err := applyOpenBotTeamRoles(&wf, map[string]openBotTeamRole{"plan": {Model: tt.pin, Effort: "high"}}); err != nil {
++			t.Fatal(err)
++		}
++		sess := &Session{Metadata: map[string]interface{}{}}
++		if err := pinTaskModel(sess, def.Model, ""); err != nil {
++			t.Fatal(err)
++		}
++		if got, err := c.Complete(t.Context(), def.Model, "test"); err != nil || got != tt.reply {
++			t.Fatalf("model %q returned %q, %v", sessionModel(sess), got, err)
++		}
++	}
++	_, model, ok := providers.FindModel(t.Context(), "anthropic:shared-model")
++	if !ok || model.Context != 65536 || model.ContextSource != providers.ContextDeclared {
++		t.Fatalf("managed context metadata: %+v", model)
++	}
++	if _, err := c.Complete(t.Context(), "missing:shared-model", "test"); err == nil || !strings.Contains(err.Error(), "connection") {
++		t.Fatalf("missing explicit model error: %v", err)
++	}
++	service, err := newDecisionService(func(string) string { return "" })
++	if err != nil {
++		t.Fatal(err)
++	}
++	question, err := decision.Boolean("Is the test complete?", "", "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	res := service.Evaluate(t.Context(), decision.Request{State: "Yes.", Questions: map[string]decision.Question{"ok": question}}, decision.Options{})
++	if !res.OK() || res.Provider != "openai" || res.Model != "gpt-6-luna" || res.Answers["ok"].ProbabilityTrue != 1 {
++		t.Fatalf("decision did not use the official model: %+v", res)
++	}
++}
++
++func TestOpenBotProviderNeverFollowsCredentialedRedirect(t *testing.T) {
++	t.Setenv("MEMDOOR_OPENBOT_TEAM", "1")
++	t.Setenv("MEMDOOR_MODEL", "custom:fixture")
++	t.Setenv("OPENAI_API_KEY", "official-key")
++	var received atomic.Int64
++	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path == "/private/v1/responses" {
++			w.Header().Set("Location", "/other")
++			http.Error(w, "echoing fixture-key and private-header", http.StatusTemporaryRedirect)
++		} else {
++			received.Add(1)
++			w.WriteHeader(http.StatusNoContent)
++		}
++	}))
++	defer fixture.Close()
++	setOpenBotConnections(t, map[string]map[string]any{
++		"custom:fixture": {"api": "responses", "base": fixture.URL + "/private", "key": "fixture-key", "headers": map[string]string{"X-Custom": "private-header"}, "model": "fixture"},
++	})
++	c := workflowCompleter{s: &Server{clientFactory: providers.NewClientFactory()}}
++	_, err := c.Complete(t.Context(), "", "test")
++	if err == nil || strings.Contains(err.Error(), "fixture-key") || strings.Contains(err.Error(), "private-header") ||
++		!strings.Contains(err.Error(), "307") || received.Load() != 0 {
++		t.Fatalf("redirect reached another path or exposed a credential: %v", err)
++	}
++}
 diff --git a/gateway/openbot_team_settings.go b/gateway/openbot_team_settings.go
 new file mode 100644
-index 0000000..7529537
+index 0000000..8537c60
 --- /dev/null
 +++ b/gateway/openbot_team_settings.go
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,95 @@
 +package gateway
 +
 +import (
@@ -937,10 +1262,10 @@ index 0000000..7529537
 +	"fmt"
 +	"io"
 +	"os"
-+	"regexp"
 +	"strconv"
 +	"strings"
 +
++	"memdoor/gateway/providers"
 +	"memdoor/pkg/workflow"
 +)
 +
@@ -956,8 +1281,6 @@ index 0000000..7529537
 +	DecisionModel string                     `json:"decisionModel"`
 +	Roles         map[string]openBotTeamRole `json:"roles"`
 +}
-+
-+var openBotModelID = regexp.MustCompile(`^gpt-[a-z0-9][a-z0-9.-]{0,79}$`)
 +
 +func loadOpenBotTeamRoles(wf *workflow.Workflow) error {
 +	path := os.Getenv("MEMDOOR_OPENBOT_ROLES_FILE")
@@ -1004,10 +1327,11 @@ index 0000000..7529537
 +		if model == "" {
 +			model = os.Getenv("MEMDOOR_MODEL")
 +		}
-+		if !openBotModelID.MatchString(model) {
-+			return fmt.Errorf("Invalid OpenAI model for Memdoor role %s", name)
++		pin, err := providers.OpenBotModelPin(model)
++		if err != nil {
++			return fmt.Errorf("Memdoor role %s: %w", name, err)
 +		}
-+		def.Model = "openai:" + model
++		def.Model = pin
 +		switch role.Effort {
 +		case "":
 +		case "none", "low", "medium", "high", "xhigh", "max":
@@ -1028,10 +1352,10 @@ index 0000000..7529537
 +}
 diff --git a/gateway/openbot_team_settings_test.go b/gateway/openbot_team_settings_test.go
 new file mode 100644
-index 0000000..45b25ea
+index 0000000..b53c7e8
 --- /dev/null
 +++ b/gateway/openbot_team_settings_test.go
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,160 @@
 +package gateway
 +
 +import (
@@ -1115,6 +1439,19 @@ index 0000000..45b25ea
 +	}
 +}
 +
++func TestOpenBotTeamMissingRoleConnectionFailsBeforeRun(t *testing.T) {
++	t.Setenv("MEMDOOR_OPENBOT_TEAM", "1")
++	def := &templates.YamlTaskDefinition{Type: "agent"}
++	wf := workflow.Workflow{
++		Defs:  map[string]*templates.YamlTaskDefinition{"team-solve.steps.plan": def},
++		Tasks: []workflow.Task{{Full: "team-solve.steps.plan"}},
++	}
++	err := applyOpenBotTeamRoles(&wf, map[string]openBotTeamRole{"plan": {Model: "custom:org/model:free"}})
++	if err == nil || !strings.Contains(err.Error(), "plan") || !strings.Contains(err.Error(), "connection") {
++		t.Fatalf("role error = %v, want missing connection for plan", err)
++	}
++}
++
 +func TestOpenBotTeamRoleEffortReachesResponses(t *testing.T) {
 +	testenv.Home(t)
 +	t.Setenv("MEMDOOR_OPENBOT_STATE_DIR", t.TempDir())
@@ -1180,37 +1517,336 @@ index 0000000..45b25ea
 +	}
 +}
 diff --git a/gateway/providers/factory.go b/gateway/providers/factory.go
-index 02d6d5b..e1da2db 100644
+index 02d6d5b..d1cf9e9 100644
 --- a/gateway/providers/factory.go
 +++ b/gateway/providers/factory.go
-@@ -2,7 +2,10 @@ package providers
- 
+@@ -3,6 +3,7 @@ package providers
  import (
  	"context"
-+	"errors"
  	"fmt"
 +	"os"
-+	"strings"
  )
  
  // ClientFactory hands out the client for a turn. Every request goes through
-@@ -18,6 +21,14 @@ func NewClientFactory() *ClientFactory {
+@@ -18,6 +19,9 @@ func NewClientFactory() *ClientFactory {
  
  // GetClientFor is the client for one agent's turn.
  func (f *ClientFactory) GetClientFor(ctx context.Context, agent string) (LLMClient, error) {
 +	if os.Getenv("MEMDOOR_OPENBOT_TEAM") == "1" {
-+		engine, ok, reason := VendorEngine()
-+		if !ok {
-+			return nil, errors.New(reason)
-+		}
-+		model := strings.TrimPrefix(engine.AnsweringModel(ctx, agent), VendorOpenAI+":")
-+		return newVendorClient(ctx, &engine, model), nil
++		return openBotClient(ctx)
 +	}
  	if m := ModelFromContext(ctx); m != "" {
  		if p, model, ok := FindModel(ctx, m); ok {
  			return p.Client(ctx, model.ID), nil
+diff --git a/gateway/providers/oai_native.go b/gateway/providers/oai_native.go
+index d5c7cf9..8910e8f 100644
+--- a/gateway/providers/oai_native.go
++++ b/gateway/providers/oai_native.go
+@@ -40,6 +40,8 @@ type oaiClient struct {
+ 	// vendor: a company's key (vendor.go) — the company's attribution
+ 	// headers travel on every request, nothing OpenRouter-specific does.
+ 	vendor bool
++	// Managed OpenBot pins do not consult the provider catalogue.
++	openBot bool
+ 	// keyless: a runtime connected with no key (Ollama, llama.cpp, janis):
+ 	// keylessStallAfter, and thinking turned off the way Ollama reads it.
+ 	keyless bool
+@@ -121,9 +123,11 @@ func (m *oaiMessages) New(ctx context.Context, params llm.MessageNewParams) (*ll
+ 	reqBody.Provider = m.client.provider
+ 	if m.client.attribute {
+ 		reqBody.Provider = withStickyHost(m.client.provider, model) // byok_hosts.go
+-		reqBody.Reasoning = reasoningFor(ctx, model)                // reasoning.go
++		if !m.client.openBot {
++			reqBody.Reasoning = reasoningFor(ctx, model) // reasoning.go
++		}
+ 	}
+-	if m.client.keyless {
++	if m.client.keyless && !m.client.openBot {
+ 		reqBody.ReasoningEffort = keylessReasoningEffort(ctx) // reasoning.go
+ 	}
+ 
+diff --git a/gateway/providers/openbot.go b/gateway/providers/openbot.go
+new file mode 100644
+index 0000000..0c78a89
+--- /dev/null
++++ b/gateway/providers/openbot.go
+@@ -0,0 +1,247 @@
++package providers
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"net/url"
++	"os"
++	"regexp"
++	"strings"
++	"sync/atomic"
++	"unicode"
++
++	"golang.org/x/net/http/httpguts"
++)
++
++const openBotProvidersEnv = "MEMDOOR_OPENBOT_PROVIDERS"
++
++type openBotConnection struct {
++	API     string
++	Base    string
++	Key     string
++	Headers map[string]string
++	Model   string
++	Context int
++}
++
++var openBotConnections atomic.Pointer[map[string]openBotConnection]
++
++var (
++	openBotGPT        = regexp.MustCompile(`^gpt-[a-z0-9][a-z0-9.-]{0,79}$`)
++	openBotProviderID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
++	openBotWireModel  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/\[\],=-]{0,159}$`)
++)
++
++// LoadOpenBotProviders takes the host's selected connections into memory
++// before a managed ACP turn can start a project command.
++func LoadOpenBotProviders() error {
++	raw := os.Getenv(openBotProvidersEnv)
++	if err := os.Unsetenv(openBotProvidersEnv); err != nil {
++		return errors.New("could not remove OpenBot provider credentials from the environment")
++	}
++	openBotConnections.Store(nil)
++	if raw == "" {
++		return nil
++	}
++	var connections map[string]openBotConnection
++	if err := json.Unmarshal([]byte(raw), &connections); err != nil || connections == nil {
++		return errors.New("invalid OpenBot provider connections")
++	}
++	for pin, connection := range connections {
++		provider, _, ok := splitOpenBotPin(pin)
++		if !ok || provider == VendorOpenAI || !connection.valid() {
++			return errors.New("invalid OpenBot provider connection")
++		}
++	}
++	openBotConnections.Store(&connections)
++	return nil
++}
++
++func (c openBotConnection) valid() bool {
++	if c.Model == "" || len(c.Model) > 1024 || strings.TrimSpace(c.Model) != c.Model ||
++		strings.ContainsFunc(c.Model, unicode.IsControl) || c.Context < 0 ||
++		(c.Key != "" && !httpguts.ValidHeaderFieldValue(c.Key)) {
++		return false
++	}
++	switch c.API {
++	case APIAnthropic, APIResponses, APIChat, APIOpenRouter:
++	default:
++		return false
++	}
++	u, err := url.Parse(c.Base)
++	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
++		u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
++		return false
++	}
++	for name, value := range c.Headers {
++		if !httpguts.ValidHeaderFieldName(name) || !httpguts.ValidHeaderFieldValue(value) {
++			return false
++		}
++		switch http.CanonicalHeaderKey(name) {
++		case "Host", "Content-Length", "Transfer-Encoding", "Connection", "Trailer", "Upgrade", "Proxy-Authorization", "Proxy-Connection":
++			return false
++		}
++	}
++	return true
++}
++
++func splitOpenBotPin(pin string) (provider, model string, ok bool) {
++	provider, model, ok = strings.Cut(pin, ":")
++	return provider, model, ok && openBotProviderID.MatchString(provider) && openBotWireModel.MatchString(model)
++}
++
++// OpenBotModelPin converts a legacy GPT model to its provider-qualified pin
++// and verifies that a selected connection exists for any other model.
++func OpenBotModelPin(pin string) (string, error) {
++	if openBotGPT.MatchString(pin) {
++		return VendorOpenAI + ":" + pin, nil
++	}
++	provider, model, ok := splitOpenBotPin(pin)
++	if !ok || (provider == VendorOpenAI && !openBotGPT.MatchString(model)) {
++		return "", errors.New("invalid OpenBot model pin")
++	}
++	if provider != VendorOpenAI {
++		if _, ok := openBotConnectionFor(pin); !ok {
++			return "", fmt.Errorf("no OpenBot provider connection configured for %s", pin)
++		}
++	}
++	return pin, nil
++}
++
++func openBotConnectionFor(pin string) (openBotConnection, bool) {
++	if connections := openBotConnections.Load(); connections != nil {
++		c, ok := (*connections)[pin]
++		return c, ok
++	}
++	return openBotConnection{}, false
++}
++
++// openBotClient uses the exact pin, including the provider's identity
++// when different connections offer a model with the same ID.
++func openBotClient(ctx context.Context) (LLMClient, error) {
++	key := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
++	if key == "" {
++		return nil, errors.New("set an OpenAI API key for the Memdoor team in OpenBot settings")
++	}
++	pin := ModelFromContext(ctx)
++	if pin == "" {
++		pin = os.Getenv("MEMDOOR_MODEL")
++	}
++	pin, err := OpenBotModelPin(pin)
++	if err != nil {
++		return nil, err
++	}
++	provider, model, _ := splitOpenBotPin(pin)
++	if provider == VendorOpenAI {
++		client := newResponsesClient(key, openaiDefaultBase, model).(*responsesClient)
++		client.openBotEffort = true
++		(openBotConnection{Key: key}).configureHTTP(client.httpClient)
++		return client, nil
++	}
++	connection, _ := openBotConnectionFor(pin)
++	return connection.client(ctx), nil
++}
++
++func (c openBotConnection) client(ctx context.Context) LLMClient {
++	base := strings.TrimRight(c.Base, "/")
++	var client LLMClient
++	switch c.API {
++	case APIAnthropic:
++		// Anthropic's adapter adds /v1/messages itself.
++		base = strings.TrimSuffix(strings.TrimSuffix(base, "/v1/messages"), "/v1")
++		client = newAnthropicClient(c.Key, base, c.Model)
++		anthropic := client.(*anthropicClient)
++		c.configureHTTP(anthropic.httpClient)
++	case APIResponses:
++		client = newResponsesClient(c.Key, base, c.Model)
++		responses := client.(*responsesClient)
++		c.configureHTTP(responses.httpClient)
++	default:
++		p := Provider{API: c.API, Base: base, Key: c.Key, Keyless: c.Key == ""}
++		chat := p.Client(ctx, c.Model).(*oaiClient)
++		chat.openBot = true
++		c.configureHTTP(chat.httpClient)
++		client = chat
++	}
++	return client
++}
++
++func (c openBotConnection) configureHTTP(client *http.Client) {
++	var redactions []string
++	addSecret := func(secret string) {
++		if secret != "" {
++			escaped, _ := json.Marshal(secret)
++			redactions = append(redactions, string(escaped[1:len(escaped)-1]), "[redacted]", secret, "[redacted]")
++		}
++	}
++	addSecret(c.Key)
++	for name, value := range c.Headers {
++		addSecret(value)
++		if http.CanonicalHeaderKey(name) == "Authorization" {
++			_, credential, _ := strings.Cut(value, " ")
++			addSecret(credential)
++		}
++	}
++	client.Transport = openBotTransport{next: client.Transport, headers: c.Headers, redactions: strings.NewReplacer(redactions...)}
++	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
++}
++
++type openBotTransport struct {
++	next       http.RoundTripper
++	headers    map[string]string
++	redactions *strings.Replacer
++}
++
++func (t openBotTransport) RoundTrip(req *http.Request) (*http.Response, error) {
++	req = req.Clone(req.Context())
++	for name, value := range t.headers {
++		req.Header.Set(name, value)
++	}
++	resp, err := t.next.RoundTrip(req)
++	if err == nil && resp.StatusCode != http.StatusOK {
++		// Keep provider error details (such as a context-length rejection)
++		// available to the adapter while removing any echoed credentials.
++		const maxErrorBody = 1 << 20
++		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody+1))
++		resp.Body.Close()
++		resp.Body = http.NoBody
++		resp.ContentLength = 0
++		if readErr == nil && len(body) <= maxErrorBody {
++			body = []byte(t.redactions.Replace(string(body)))
++			resp.Body = io.NopCloser(bytes.NewReader(body))
++			resp.ContentLength = int64(len(body))
++		}
++	}
++	return resp, err
++}
++
++func findOpenBotModel(pin string) (Provider, Model, bool) {
++	if pin == "" {
++		pin = os.Getenv("MEMDOOR_MODEL")
++	}
++	pin, err := OpenBotModelPin(pin)
++	if err != nil {
++		return Provider{}, Model{}, false
++	}
++	provider, id, _ := splitOpenBotPin(pin)
++	api, window, source := APIResponses, openaiDefaultContext, ContextDefault
++	if provider != VendorOpenAI {
++		connection, _ := openBotConnectionFor(pin)
++		api, id, window = connection.API, connection.Model, connection.Context
++		switch {
++		case window > 0:
++			source = ContextDeclared
++		case api == APIAnthropic:
++			window = anthropicDefaultContext
++		default:
++			window = gatewayDefaultContext
++		}
++	}
++	// Return metadata only. The factory owns the in-memory credentials.
++	return Provider{ID: provider, API: api}, Model{ID: id, Context: window, ContextSource: source}, true
++}
+diff --git a/gateway/providers/registry.go b/gateway/providers/registry.go
+index 936dfa5..9533cc6 100644
+--- a/gateway/providers/registry.go
++++ b/gateway/providers/registry.go
+@@ -513,6 +513,12 @@ func modelsURL(base string) string {
+ // providers list (qwen/qwen3.8-27b on Groq and on OpenRouter). A prefix
+ // that is not a provider's id is part of the model id.
+ func SplitPin(id string) (provider, model string) {
++	if os.Getenv("MEMDOOR_OPENBOT_TEAM") == "1" {
++		if provider, model, ok := splitOpenBotPin(id); ok {
++			return provider, model
++		}
++		return "", id
++	}
+ 	if i := strings.Index(id, ":"); i > 0 {
+ 		for _, p := range Providers() {
+ 			if p.ID == id[:i] {
+@@ -531,6 +537,9 @@ func SplitPin(id string) (provider, model string) {
+ // local` stayed invisible for the hour a list is kept, and the first run
+ // after the pull answered on the list's first, retired, model (2026-11-01).
+ func FindModel(ctx context.Context, id string) (Provider, Model, bool) {
++	if os.Getenv("MEMDOOR_OPENBOT_TEAM") == "1" {
++		return findOpenBotModel(id)
++	}
+ 	if p, m, ok := findListedModel(ctx, id); ok {
+ 		return p, m, true
+ 	}
 diff --git a/gateway/providers/responses.go b/gateway/providers/responses.go
-index a5c415e..d8274d4 100644
+index a5c415e..ff37e37 100644
 --- a/gateway/providers/responses.go
 +++ b/gateway/providers/responses.go
 @@ -9,6 +9,7 @@ import (
@@ -1221,7 +1857,16 @@ index a5c415e..d8274d4 100644
  	"strings"
  	"time"
  
-@@ -56,16 +57,29 @@ func (c *responsesClient) Messages() MessageService { return &responsesMessages{
+@@ -33,6 +34,8 @@ type responsesClient struct {
+ 	// plan is ChatGPT plan usage: store:false on every request, and none
+ 	// of the fields the preview refuses (temperature, max_output_tokens …).
+ 	plan bool
++	// Explicit OpenBot role effort is supported by the official GPT route.
++	openBotEffort bool
+ }
+ 
+ // responsesURL is the endpoint under a gateway base: ".../ai" → ".../ai/v1/
+@@ -56,16 +59,29 @@ func (c *responsesClient) Messages() MessageService { return &responsesMessages{
  
  type responsesMessages struct{ client *responsesClient }
  
@@ -1260,11 +1905,11 @@ index a5c415e..d8274d4 100644
  	// ToolChoice is "required" on a retry that must open on a call
  	// (llm.WithForcedToolCall), as the chat client sends it; absent
  	// otherwise, so the model decides. Missed when the OpenAI key moved to
-@@ -162,6 +176,12 @@ func (m *responsesMessages) New(ctx context.Context, params llm.MessageNewParams
+@@ -162,6 +178,12 @@ func (m *responsesMessages) New(ctx context.Context, params llm.MessageNewParams
  	}
  	req := responsesRequest{Model: model, Instructions: systemText(params.System), Input: responsesInput(params.Messages),
  		MaxOutputTokens: params.MaxTokens, Temperature: params.Temperature, TopP: params.TopP, Stream: true}
-+	if effort, ok := ctx.Value(openBotRoleEffortKey{}).(string); ok {
++	if effort, ok := ctx.Value(openBotRoleEffortKey{}).(string); ok && m.client.openBotEffort {
 +		req.Reasoning = map[string]string{"effort": effort}
 +		if effort != "none" {
 +			req.Temperature, req.TopP = 0, 0
@@ -1274,10 +1919,10 @@ index a5c415e..d8274d4 100644
  		// developers.openai.com/siwc/token-sharing-open-source/preview-limitations:
  		// store false, stream true, and no temperature, max_output_tokens,
 diff --git a/gateway/providers/vendor.go b/gateway/providers/vendor.go
-index 01fd17b..206fc9c 100644
+index 01fd17b..90b326f 100644
 --- a/gateway/providers/vendor.go
 +++ b/gateway/providers/vendor.go
-@@ -193,6 +193,13 @@ func firstVendorKey() (vendorKey, bool) {
+@@ -193,6 +193,20 @@ func firstVendorKey() (vendorKey, bool) {
  }
  
  func vendorEngineOn(model string) (re RemoteEngine, ok bool, reason string) {
@@ -1286,12 +1931,19 @@ index 01fd17b..206fc9c 100644
 +		if key == "" || model == "" {
 +			return RemoteEngine{}, false, "OpenBot did not configure an OpenAI API key and model"
 +		}
-+		return vendorEngine(VendorOpenAI, openaiDefaultBase, key, model, openaiDefaultContext), true, ""
++		_, selected, ok := findOpenBotModel(model)
++		if !ok {
++			_, err := OpenBotModelPin(model)
++			return RemoteEngine{}, false, err.Error()
++		}
++		// The managed factory routes turns by pin. Keep the official OpenAI
++		// engine as the identity checked by the separate decision service.
++		return vendorEngine(VendorOpenAI, openaiDefaultBase, key, model, selected.Context), true, ""
 +	}
  	if vendorOff() {
  		return RemoteEngine{}, false, ""
  	}
-@@ -291,6 +298,9 @@ func newVendorClient(_ context.Context, re *RemoteEngine, model string) LLMClien
+@@ -291,6 +305,9 @@ func newVendorClient(_ context.Context, re *RemoteEngine, model string) LLMClien
  // separated by ";" or newlines, each sent on every vendor request.
  func VendorHeaders() map[string]string {
  	out := map[string]string{}
@@ -1301,6 +1953,33 @@ index 01fd17b..206fc9c 100644
  	for _, pair := range strings.FieldsFunc(os.Getenv("MEMDOOR_VENDOR_HEADERS"), func(r rune) bool { return r == ';' || r == '\n' }) {
  		name, value, ok := strings.Cut(pair, ":")
  		if name, value = strings.TrimSpace(name), strings.TrimSpace(value); ok && name != "" && value != "" {
+diff --git a/gateway/route_handler.go b/gateway/route_handler.go
+index bfc0024..4d5c026 100644
+--- a/gateway/route_handler.go
++++ b/gateway/route_handler.go
+@@ -7,6 +7,7 @@ import (
+ 	"log/slog"
+ 	"memdoor/gateway/logs"
+ 	"net/http"
++	"os"
+ 	"regexp"
+ 	"strings"
+ 
+@@ -210,7 +211,13 @@ func pinRoute(s *Session, rung, ladderLen int) error {
+ // offers, off the ladder (the maintainer, 2026-09-26: "user can change models").
+ func pinModel(s *Session, id, sortBy, order string) error {
+ 	id = strings.TrimSpace(id)
+-	if !modelIDRe.MatchString(id) {
++	if os.Getenv("MEMDOOR_OPENBOT_TEAM") == "1" {
++		pin, err := providers.OpenBotModelPin(id)
++		if err != nil {
++			return err
++		}
++		id = pin
++	} else if !modelIDRe.MatchString(id) {
+ 		return fmt.Errorf("not a model id: %q (an id as /model-search lists them)", id)
+ 	}
+ 	switch sortBy = strings.ToLower(strings.TrimSpace(sortBy)); sortBy {
 diff --git a/gateway/server_lifecycle.go b/gateway/server_lifecycle.go
 index f38c47f..3f3a074 100644
 --- a/gateway/server_lifecycle.go
@@ -1381,7 +2060,7 @@ index f38c47f..3f3a074 100644
  	// work (log flush, database close). On a clean SIGTERM, ListenAndServe
  	// returns http.ErrServerClosed the moment srv.Shutdown() runs; without this
 diff --git a/gateway/workflow_runs.go b/gateway/workflow_runs.go
-index ea30b0e..d00c421 100644
+index ea30b0e..443aeb7 100644
 --- a/gateway/workflow_runs.go
 +++ b/gateway/workflow_runs.go
 @@ -428,6 +428,7 @@ func (c workflowCompleter) CompleteWithSystem(ctx context.Context, model, system
@@ -1400,7 +2079,24 @@ index ea30b0e..d00c421 100644
  		}
  	}
  
-@@ -909,6 +911,14 @@ func (s *Server) checkWorkflow(dir, name string) (workflow.Workflow, error) {
+@@ -754,6 +756,7 @@ type workflowTaskJSON struct {
+ 	Requires []string `json:"requires"`
+ 	Target   string   `json:"target"`
+ 	External bool     `json:"external"`
++	Optional bool     `json:"optional,omitempty"`
+ 	State    string   `json:"state"`
+ 	Error    string   `json:"error,omitempty"`
+ 	Receipt  string   `json:"receipt,omitempty"` // what proved it: the turn's receipt line
+@@ -832,7 +835,7 @@ func (r *workflowRun) snapshot() workflowRunJSON {
+ 	}
+ 	r.mu.Unlock()
+ 	for _, t := range r.WF.Tasks {
+-		tj := workflowTaskJSON{Name: t.Name, Agent: t.Agent, Requires: t.Requires, External: t.External, State: "waiting", Target: t.Target, Receipt: receipts[t.Name], About: t.About}
++		tj := workflowTaskJSON{Name: t.Name, Agent: t.Agent, Requires: t.Requires, External: t.External, Optional: t.Optional, State: "waiting", Target: t.Target, Receipt: receipts[t.Name], About: t.About}
+ 		if tr, ok := res.Tasks[t.Name]; ok {
+ 			tj.State, tj.Error, tj.Attempt = string(tr.Status), workflow.ErrorText(tr.Error), tr.Attempt
+ 			if tr.Took > 0 {
+@@ -909,6 +912,14 @@ func (s *Server) checkWorkflow(dir, name string) (workflow.Workflow, error) {
  	if dir == "" || !filepath.IsAbs(dir) {
  		return workflow.Workflow{}, fmt.Errorf("a workflow runs in a project: give its absolute directory")
  	}
@@ -1415,7 +2111,20 @@ index ea30b0e..d00c421 100644
  	path, err := workflow.Find(dir, name)
  	if err != nil {
  		return workflow.Workflow{}, err
-@@ -2057,7 +2067,10 @@ func parseTaskModel(model string) (m taskModel) {
+@@ -953,6 +964,12 @@ func (s *Server) startWorkflow(dir, name, session, workspace, actor, partition,
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	if name == "team-solve" && os.Getenv("MEMDOOR_OPENBOT_TEAM") == "1" {
++		model, err = providers.OpenBotModelPin(firstNonEmptyString(model, os.Getenv("MEMDOOR_MODEL")))
++		if err != nil {
++			return nil, err
++		}
++	}
+ 	// Where the state lives is settled before the run exists: a Pro run
+ 	// whose store does not answer is refused here, in words, not recorded.
+ 	if _, err := s.runRepository(dir); err != nil {
+@@ -2057,7 +2074,10 @@ func parseTaskModel(model string) (m taskModel) {
  		case "thinking", "effort":
  			if i+1 < len(fields) {
  				switch e := strings.ToLower(fields[i+1]); e {
@@ -1971,6 +2680,18 @@ index 840149a..6cb0cc0 100644
  	home, err := os.UserHomeDir()
  	if err != nil {
  		home = ""
+diff --git a/pkg/shell/env.go b/pkg/shell/env.go
+index ce6c725..dfa70b5 100644
+--- a/pkg/shell/env.go
++++ b/pkg/shell/env.go
+@@ -19,6 +19,7 @@ var modelKeys = map[string]bool{
+ 	"EUROUTER_API_KEY": true, "LLMGATEWAY_API_KEY": true, "AIMLAPI_API_KEY": true,
+ 	"AI_GATEWAY_API_KEY":        true,
+ 	"MEMDOOR_SYSTEMONE_API_KEY": true, "AI_GATEWAY_TOKEN": true,
++	"MEMDOOR_OPENBOT_PROVIDERS": true,
+ }
+ 
+ // IsModelKey says whether the variable name holds a key the gateway calls
 diff --git a/workflows/team-solve/changes.sh b/workflows/team-solve/changes.sh
 index 8eca0a9..ac8938c 100755
 --- a/workflows/team-solve/changes.sh

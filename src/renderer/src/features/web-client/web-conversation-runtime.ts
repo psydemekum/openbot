@@ -10,7 +10,11 @@ import {
   type TeamRealtimeEvent,
   type TestRoutineInput,
 } from "@openbot/contracts/ipc";
-import { isMemdoorTeamSettings, type SaveMemdoorTeamSettings } from "@openbot/contracts/ipc-memdoor";
+import {
+  isLegacyMemdoorTeamConfig,
+  isMemdoorTeamSettings,
+  type SaveMemdoorTeamSettings,
+} from "@openbot/contracts/ipc-memdoor";
 import { AGENT_FOLDERS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-folders-v1";
 import { AGENT_INSTRUCTIONS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-instructions-v1";
 import { AGENT_MEMORY_LIMIT_CAPABILITY } from "@openbot/contracts/team-protocol/agent-memory-limit-v1";
@@ -20,6 +24,10 @@ import {
   FEEDBACK_WITHDRAW_ROUTES,
 } from "@openbot/contracts/team-protocol/feedback-withdraw-v1";
 import { LIVE_VOICE_CAPABILITY } from "@openbot/contracts/team-protocol/live-voice-v1";
+import {
+  MEMDOOR_TEAM_MODEL_SOURCES_CAPABILITY,
+  MEMDOOR_TEAM_MODEL_SOURCES_ROUTES,
+} from "@openbot/contracts/team-protocol/memdoor-team-model-sources-v1";
 import { MEMDOOR_TEAM_CAPABILITY, MEMDOOR_TEAM_ROUTES } from "@openbot/contracts/team-protocol/memdoor-team-v1";
 import { ROUTINE_PAUSE_REASONS_CAPABILITY } from "@openbot/contracts/team-protocol/routine-pause-reasons-v1";
 import { ROUTINE_RESULTS_CAPABILITY } from "@openbot/contracts/team-protocol/routine-results-v1";
@@ -85,6 +93,7 @@ function webHostAdmin(
   routinePauseReasonsEnabled?: () => boolean,
   webhookAgentSecretEnabled?: () => boolean,
   memdoorTeamEnabled?: () => boolean,
+  memdoorTeamModelSourcesEnabled?: () => boolean,
 ): NonNullable<ConversationRuntime["admin"]> {
   const eventRoutines = webEventRoutinesApi(
     (...args) => request()(...args),
@@ -99,14 +108,19 @@ function webHostAdmin(
   return {
     get memdoorTeam() {
       if (memdoorTeamEnabled?.() !== true) return undefined;
+      const routes = memdoorTeamModelSourcesEnabled?.() ? MEMDOOR_TEAM_MODEL_SOURCES_ROUTES : MEMDOOR_TEAM_ROUTES;
       const decode = (value: unknown) => {
         if (!isMemdoorTeamSettings(value)) throw new Error("Invalid Memdoor team settings response.");
         return value;
       };
       return {
-        read: (agentId: string) => request()("POST", MEMDOOR_TEAM_ROUTES.settings, decode, { agentId }),
-        save: ({ agentId, teamModel, decisionModel, roles }: SaveMemdoorTeamSettings) =>
-          request()("POST", MEMDOOR_TEAM_ROUTES.update, decode, { agentId, teamModel, decisionModel, roles }),
+        read: (agentId: string) => request()("POST", routes.settings, decode, { agentId }),
+        save: ({ agentId, teamModel, decisionModel, roles }: SaveMemdoorTeamSettings) => {
+          const input = { agentId, teamModel, decisionModel, roles };
+          if (routes === MEMDOOR_TEAM_ROUTES && !isLegacyMemdoorTeamConfig(input))
+            throw new Error(currentText().t("error.team.hostUpdateRequired"));
+          return request()("POST", routes.update, decode, input);
+        },
       };
     },
     get sessionSettings() {
@@ -505,6 +519,7 @@ export function createWebConversationRuntime(
           routinePauseReasonsEnabled,
           () => eventsEnabled?.() === true && hasCapability?.(WEBHOOK_AGENT_SECRET_CAPABILITY) === true,
           () => canAdminister?.(MEMDOOR_TEAM_CAPABILITY) === true,
+          () => canAdminister?.(MEMDOOR_TEAM_MODEL_SOURCES_CAPABILITY) === true,
         )
       : undefined,
   };

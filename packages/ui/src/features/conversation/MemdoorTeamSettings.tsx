@@ -1,4 +1,14 @@
-import type { AgentStatus, ClientAgentModelOption } from "@openbot/contracts/ipc";
+import {
+  type AgentProviderId,
+  type AgentStatus,
+  type ClientAgentModelOption,
+  type CustomProviderSummary,
+  composedCustomModelId,
+  DEFAULT_CUSTOM_PROVIDER_HARNESS,
+  defaultProviderModel,
+  isAgentModel,
+  isAgentProvider,
+} from "@openbot/contracts/ipc";
 import {
   isMemdoorTeamConfig,
   isSaveMemdoorTeamSettings,
@@ -9,13 +19,17 @@ import {
   type MemdoorRole,
   type MemdoorRoleId,
   type MemdoorTeamConfig,
+  memdoorModelAvailable,
+  memdoorModelChoice,
+  memdoorModelSource,
+  parseMemdoorModelChoice,
   type SaveMemdoorTeamSettings,
   type MemdoorTeamSettings as Settings,
 } from "@openbot/contracts/ipc-memdoor";
 import { Button, Field, Input, NativeSelect, Text, Textarea } from "@openbot/ui";
 import { ProviderModelPicker } from "@openbot/ui/components/ProviderModelPicker";
 import { SettingsLinkGroup } from "@openbot/ui/components/SettingsPanel";
-import { createEffect, createMemo, createStore, For, Show } from "solid-js";
+import { createEffect, createMemo, createStore, For, onSettled, Show } from "solid-js";
 import { useText } from "../../text";
 
 const EMPTY_ROLE: MemdoorRole = { model: "", effort: "", prompt: "" };
@@ -49,7 +63,7 @@ const RUNTIME_LABEL = {
 } as const satisfies Record<Settings["runtime"], string>;
 
 interface PanelState {
-  status: Pick<Settings, "runtime" | "hasApiKey"> | null;
+  status: Pick<Settings, "runtime" | "hasApiKey" | "modelSources"> | null;
   draft: MemdoorTeamConfig | null;
   apiKey: string;
   dirty: boolean;
@@ -79,10 +93,38 @@ function draftFrom(settings: Settings): MemdoorTeamConfig {
   return { teamModel: settings.teamModel, decisionModel: settings.decisionModel, roles };
 }
 
+function customModelId(endpoint: string, model: string): string {
+  const id = composedCustomModelId(endpoint, model);
+  if (isAgentModel(id) && !model.startsWith("b64:")) return id;
+  const bytes = new TextEncoder().encode(model);
+  const encoded = btoa(String.fromCharCode(...bytes))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+  return composedCustomModelId(endpoint, `b64:${encoded}`);
+}
+
+function modelFallback(provider: AgentProviderId, id: string, name: string): ClientAgentModelOption {
+  return {
+    provider,
+    id,
+    name,
+    description: "",
+    defaultReasoningEffort: "medium",
+    supportedReasoningEfforts: ["medium"],
+    reasoningEffortConfigurable: false,
+  };
+}
+
+function endpointSource(endpoint: CustomProviderSummary): string {
+  return `${endpoint.harness ?? DEFAULT_CUSTOM_PROVIDER_HARNESS}:${endpoint.id}/`;
+}
+
 export function MemdoorTeamSettings(props: {
   agentId: string;
   agentStatus: AgentStatus;
   modelOptions: ClientAgentModelOption[];
+  customProviders?: readonly CustomProviderSummary[] | undefined;
   read: () => Promise<Settings>;
   save: (input: SaveMemdoorTeamSettings) => Promise<Settings>;
   allowApiKey?: boolean;
@@ -92,26 +134,76 @@ export function MemdoorTeamSettings(props: {
   let generation = 0;
   const busy = () => state.pending !== null;
   const hasChanges = () => state.dirty || (props.allowApiKey === true && state.apiKey.trim() !== "");
-  const models = createMemo(() =>
-    props.modelOptions.filter((model) => model.provider === "codex" && MEMDOOR_MODEL_PATTERN.test(model.id)),
+  const sources = () => state.status?.modelSources;
+  const customProviders = createMemo(() =>
+    props.customProviders?.filter((endpoint) => sources()?.includes(endpointSource(endpoint))),
   );
-  // Memdoor sends requests with its own OpenAI credential, independent of the Codex CLI session.
+  const models = createMemo(() => {
+    const endpoints = customProviders() ?? [];
+    const endpointSources = new Set(endpoints.map(endpointSource));
+    const configured = new Map<string, ClientAgentModelOption>();
+    for (const endpoint of endpoints) {
+      const provider = endpoint.harness ?? DEFAULT_CUSTOM_PROVIDER_HARNESS;
+      for (const model of endpoint.models) {
+        const id = customModelId(endpoint.id, model.id);
+        if (!memdoorModelAvailable(sources(), provider, id)) continue;
+        const name = provider === "opencode" ? `${endpoint.name}/${model.name}` : model.name;
+        configured.set(memdoorModelChoice(provider, id), modelFallback(provider, id, name));
+      }
+    }
+    const catalog = new Map<string, ClientAgentModelOption>();
+    for (const model of props.modelOptions) {
+      if (!memdoorModelAvailable(sources(), model.provider, model.id)) continue;
+      const choice = memdoorModelChoice(model.provider, model.id);
+      const source = memdoorModelSource(model.provider, model.id);
+      if (source && endpointSources.has(source) && !configured.has(choice)) continue;
+      catalog.set(choice, model);
+    }
+    for (const [choice, model] of configured) {
+      if (!catalog.has(choice)) catalog.set(choice, model);
+    }
+    const listed = new Set(Array.from(catalog.values(), ({ provider }) => provider));
+    for (const provider of sources() ?? []) {
+      if (!isAgentProvider(provider) || listed.has(provider)) continue;
+      const id = defaultProviderModel(provider);
+      if (id && memdoorModelAvailable(sources(), provider, id)) {
+        catalog.set(memdoorModelChoice(provider, id), modelFallback(provider, id, id));
+      }
+    }
+    return [...catalog.values()];
+  });
+  const decisionModels = createMemo(() => models().filter((model) => model.provider === "codex"));
   const modelStatus = createMemo<AgentStatus>(() => ({ ...props.agentStatus, phase: "ready", providers: undefined }));
+  const providerRevision = createMemo(() =>
+    JSON.stringify([
+      props.agentStatus.providers?.map(({ id, state, off, apiKeyInUse }) => [
+        id,
+        state,
+        off === true,
+        apiKeyInUse === true,
+      ]),
+      props.customProviders,
+    ]),
+  );
 
-  function ModelSetting(choice: { label: string; value: string; select: (id: string) => void }) {
+  function ModelSetting(choice: { label: string; value: string; decision?: boolean; select: (id: string) => void }) {
+    const selected = createMemo(() => parseMemdoorModelChoice(choice.value));
+    const options = () => (choice.decision ? decisionModels() : models());
     return (
       <ProviderModelPicker
         variant="field"
-        onlyProvider="codex"
-        provider="codex"
-        value={choice.value}
+        catalogOnly
+        onlyProvider={choice.decision ? "codex" : undefined}
+        provider={selected()?.provider ?? "codex"}
+        value={selected()?.id ?? choice.value}
         label={choice.label}
         ariaLabel={choice.label}
-        modelOptions={models()}
+        modelOptions={options()}
+        customProviders={choice.decision ? undefined : customProviders()}
         agentStatus={modelStatus()}
-        disabled={busy() || models().length === 0}
+        disabled={busy() || options().length === 0}
         disabledReason={t("agentSettings.memdoor.noModels")}
-        onChange={choice.select}
+        onChange={(id, provider) => choice.select(memdoorModelChoice(provider, id))}
       />
     );
   }
@@ -126,7 +218,11 @@ export function MemdoorTeamSettings(props: {
       const settings = await read();
       if (current !== generation) return;
       setState((s) => {
-        s.status = { runtime: settings.runtime, hasApiKey: settings.hasApiKey };
+        s.status = {
+          runtime: settings.runtime,
+          hasApiKey: settings.hasApiKey,
+          modelSources: settings.modelSources ?? [],
+        };
         if (!s.dirty) s.draft = draftFrom(settings);
       });
     } catch {
@@ -145,16 +241,18 @@ export function MemdoorTeamSettings(props: {
   }
 
   createEffect(
-    () => [props.agentId, props.read, props.allowApiKey] as const,
-    ([, read]) => {
-      const current = ++generation;
-      setState(() => ({ ...INITIAL_STATE }));
-      void load(read, current);
-      return () => {
-        generation += 1;
-      };
+    () => ({ agentId: props.agentId, read: props.read, allowApiKey: props.allowApiKey, revision: providerRevision() }),
+    ({ agentId, read, allowApiKey }, previous) => {
+      const sameContext =
+        previous?.agentId === agentId && previous.read === read && previous.allowApiKey === allowApiKey;
+      if (sameContext && state.pending === "saving") return;
+      if (!sameContext) setState(() => ({ ...INITIAL_STATE }));
+      void load(read, ++generation);
     },
   );
+  onSettled(() => () => {
+    generation += 1;
+  });
 
   function editDraft(edit: (draft: MemdoorTeamConfig) => void) {
     if (busy()) return;
@@ -181,7 +279,8 @@ export function MemdoorTeamSettings(props: {
       const role = draft.roles[id];
       if (!role) continue;
       const model = role.model.trim();
-      if (model || role.effort || role.prompt) roles[id] = { model, effort: role.effort, prompt: role.prompt };
+      const effort = MEMDOOR_MODEL_PATTERN.test(model || draft.teamModel) ? role.effort : "";
+      if (model || effort || role.prompt) roles[id] = { model, effort, prompt: role.prompt };
     }
     const apiKey = props.allowApiKey ? state.apiKey.trim() : "";
     const input: SaveMemdoorTeamSettings = {
@@ -211,7 +310,11 @@ export function MemdoorTeamSettings(props: {
       const settings = await props.save(input);
       if (current !== generation) return;
       setState((s) => {
-        s.status = { runtime: settings.runtime, hasApiKey: settings.hasApiKey };
+        s.status = {
+          runtime: settings.runtime,
+          hasApiKey: settings.hasApiKey,
+          modelSources: settings.modelSources ?? [],
+        };
         s.draft = draftFrom(settings);
         s.apiKey = "";
         s.dirty = false;
@@ -283,6 +386,7 @@ export function MemdoorTeamSettings(props: {
               <ModelSetting
                 label={t("agentSettings.memdoor.decisionModel")}
                 value={draft().decisionModel}
+                decision
                 select={(value) =>
                   editDraft((next) => {
                     next.decisionModel = value;
@@ -325,6 +429,7 @@ export function MemdoorTeamSettings(props: {
               <For each={MEMDOOR_ROLE_IDS}>
                 {(id) => {
                   const role = () => draft().roles[id] ?? EMPTY_ROLE;
+                  const supportsEffort = () => MEMDOOR_MODEL_PATTERN.test(role().model || draft().teamModel);
                   return (
                     <SettingsLinkGroup class="agent-settings-page" title={t(ROLE_LABEL[id])}>
                       <Show when={role().model}>
@@ -340,14 +445,14 @@ export function MemdoorTeamSettings(props: {
                       </Show>
                       <Field label={t("agentSettings.memdoor.roleEffort")}>
                         <NativeSelect
-                          value={role().effort}
-                          disabled={busy()}
+                          value={supportsEffort() ? role().effort : ""}
+                          disabled={busy() || !supportsEffort()}
                           onChange={(event) => {
                             const effort = MEMDOOR_EFFORTS.find((choice) => choice === event.currentTarget.value);
                             if (effort !== undefined) editRole(id, { effort });
                           }}
                         >
-                          <For each={MEMDOOR_EFFORTS}>
+                          <For each={supportsEffort() ? MEMDOOR_EFFORTS : ([""] as const)}>
                             {(effort) => <option value={effort}>{t(EFFORT_LABEL[effort])}</option>}
                           </For>
                         </NativeSelect>

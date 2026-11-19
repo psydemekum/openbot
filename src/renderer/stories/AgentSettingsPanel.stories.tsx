@@ -176,6 +176,7 @@ export const MemdoorTeam: Story = {
       roles: {},
       hasApiKey: false,
       runtime: "ready",
+      modelSources: ["claude"],
     };
     return (
       <main class="agent-memories-story-stage">

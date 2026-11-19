@@ -1,5 +1,11 @@
+### Added
+
+- Let Memdoor teams and roles use the host's configured API providers and compatible
+  custom endpoints. Keep the decision model on OpenAI.
+
 ### Fixed
 
+- Show the failed Memdoor step and the available verification reason.
 - Return the Memdoor team's answer and file links in chats and workflow steps. Follow-up
   messages can use earlier answers from the same chat.
 - Apply the selected model, reasoning and instructions to both Memdoor ideation roles.

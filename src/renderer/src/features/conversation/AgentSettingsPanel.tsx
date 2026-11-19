@@ -516,6 +516,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
               agentId={props.agent.id}
               agentStatus={props.agentStatus}
               modelOptions={props.modelOptions}
+              customProviders={props.customProviders}
               read={api().read}
               save={api().save}
               allowApiKey={props.localHost === true && !props.remoteClient}

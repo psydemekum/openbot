@@ -101,6 +101,7 @@ function modelTier(model: PickerModel): 0 | 1 {
 export function pickerModels(
   options: ClientAgentModelOption[],
   endpoints: readonly CustomProviderSummary[] = [],
+  includeVariants = true,
 ): PickerModel[] {
   const { t } = currentText();
   const byId = new Map(options.map((model) => [model.id, model]));
@@ -182,9 +183,10 @@ export function pickerModels(
           (model.provider === "opencode" && isFreeOpencodeModel(model.id, name)) ||
           (model.provider === "openrouter" && model.id.endsWith(":free")) ||
           (piEndpointModel && isFreeOpencodeModelName(name)),
-        variants: variants.has(model.id)
-          ? [{ id: model.id, name: t("app.modelVariant.default") }, ...(variants.get(model.id) ?? [])]
-          : [],
+        variants:
+          includeVariants && variants.has(model.id)
+            ? [{ id: model.id, name: t("app.modelVariant.default") }, ...(variants.get(model.id) ?? [])]
+            : [],
         ...(model.listing ? { listing: model.listing } : {}),
       };
     });

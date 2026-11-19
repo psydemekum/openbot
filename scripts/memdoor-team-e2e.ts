@@ -5,9 +5,15 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { MEMDOOR_AGENT_ID, MEMDOOR_DECISION_MODEL, MEMDOOR_TEAM_MODEL } from "@openbot/contracts/ipc-memdoor";
+import {
+  isSaveMemdoorTeamSettings,
+  MEMDOOR_AGENT_ID,
+  MEMDOOR_DECISION_MODEL,
+  MEMDOOR_TEAM_MODEL,
+} from "@openbot/contracts/ipc-memdoor";
 import { Effect } from "effect";
-import { createMemdoorTeam } from "../src/main/memdoor-team";
+import { createMemdoorModelProviders } from "../src/main/memdoor-model-providers";
+import { createMemdoorTeam, MemdoorTeamClientUpdateRequired } from "../src/main/memdoor-team";
 
 const profile = await mkdtemp(join(tmpdir(), "openbot-memdoor-e2e-"));
 try {
@@ -15,6 +21,24 @@ try {
   const secrets = new Map<string, string>();
   const providerKey = "sk-fixture-provider";
   const teamKey = "sk-fixture-team";
+  let claudeKey = "sk-ant-fixture";
+  const customKey = "sk-custom-fixture";
+  const modelProviders = createMemdoorModelProviders({
+    providerEnvironment: (provider) => (provider === "claude" ? { ANTHROPIC_API_KEY: claudeKey } : {}),
+    providerKey: () => undefined,
+    providerOn: () => true,
+    customProviders: () => [
+      {
+        id: "test-endpoint",
+        name: "Test endpoint",
+        harness: "pi",
+        baseUrl: "http://127.0.0.1:9012/v1",
+        apiKey: customKey,
+        headers: [{ name: "X-Tenant", value: "fixture-tenant" }],
+        models: [{ id: "org/model", name: "Model", contextWindow: 64_000 }],
+      },
+    ],
+  });
   const teamOptions = {
     executable,
     profile,
@@ -30,6 +54,7 @@ try {
     },
     openAIEnvironment: () => ({ OPENAI_API_KEY: providerKey, OPENAI_BASE_URL: "https://api.openai.com/v1" }),
     openAIVaultKey: () => "sk-fixture-vault",
+    modelProviders,
   };
   const team = createMemdoorTeam(teamOptions);
   await Effect.runPromise(team.load());
@@ -58,6 +83,50 @@ try {
   const restarted = createMemdoorTeam(teamOptions);
   await Effect.runPromise(restarted.load());
   assert.deepEqual(restarted.read(), saved);
+
+  const teamChoice = "claude:claude-sonnet-4-6";
+  const roleChoice = "pi:test-endpoint/org/model";
+  const mixed = {
+    agentId: MEMDOOR_AGENT_ID,
+    teamModel: teamChoice,
+    decisionModel: MEMDOOR_DECISION_MODEL,
+    roles: { plan: { model: roleChoice, effort: "" as const, prompt: "" } },
+  };
+  assert.ok(isSaveMemdoorTeamSettings(mixed));
+  assert.ok(!isSaveMemdoorTeamSettings({ ...mixed, decisionModel: teamChoice }));
+  await Effect.runPromise(restarted.save(mixed));
+  const disk = await readFile(join(profile, "memdoor-team.json"), "utf8");
+  assert.equal(JSON.parse(disk).teamModel, teamChoice);
+  const settings = restarted.read();
+  assert.deepEqual(settings.modelSources, ["claude", "pi:test-endpoint/"]);
+  for (const secret of [teamKey, claudeKey, customKey, "fixture-tenant"]) {
+    assert.ok(!disk.includes(secret) && !JSON.stringify(settings).includes(secret));
+  }
+  const environment = Object.fromEntries(restarted.config().env.map(({ name, value }) => [name, value]));
+  assert.equal(environment.OPENAI_API_KEY, teamKey);
+  assert.equal(environment.MEMDOOR_MODEL, teamChoice);
+  assert.deepEqual(JSON.parse(environment.MEMDOOR_OPENBOT_PROVIDERS ?? "{}"), {
+    [teamChoice]: { api: "anthropic", base: "https://api.anthropic.com", key: claudeKey, model: "claude-sonnet-4-6" },
+    [roleChoice]: {
+      api: "chat",
+      base: "http://127.0.0.1:9012/v1",
+      key: customKey,
+      model: "org/model",
+      headers: { "X-Tenant": "fixture-tenant" },
+      context: 64_000,
+    },
+  });
+  const legacy = await Effect.runPromise(
+    Effect.result(restarted.save({ ...mixed, teamModel: MEMDOOR_TEAM_MODEL, roles: {} }, { legacyOnly: true })),
+  );
+  assert.equal(legacy._tag, "Failure");
+  if (legacy._tag === "Failure") assert.ok(legacy.failure.cause instanceof MemdoorTeamClientUpdateRequired);
+  const beforeRotation = restarted.connectionState();
+  claudeKey = "";
+  assert.notEqual(restarted.connectionState(), beforeRotation);
+  assert.deepEqual(restarted.read().modelSources, ["pi:test-endpoint/"]);
+  assert.equal(restarted.read().teamModel, teamChoice);
+  claudeKey = "sk-ant-fixture";
 
   const config = restarted.config();
   const worker = spawn(executable, config.args, {
@@ -109,7 +178,7 @@ try {
     }
   }
   process.stdout.write(
-    "Memdoor settings persist without the key, and the native ACP runtime handles missing credentials.\n",
+    "Memdoor settings preserve mixed model sources, keep keys private, and require OpenAI for decisions.\n",
   );
 } finally {
   await rm(profile, { recursive: true, maxRetries: 5, retryDelay: 200 });

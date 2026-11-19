@@ -41,7 +41,11 @@ import {
   type UpdateAgentFastModeInput,
 } from "@openbot/contracts/ipc";
 import { guardedDecoder } from "@openbot/contracts/ipc-decoding";
-import { isMemdoorTeamSettings, isSaveMemdoorTeamSettings } from "@openbot/contracts/ipc-memdoor";
+import {
+  isLegacyMemdoorTeamConfig,
+  isMemdoorTeamSettings,
+  isSaveMemdoorTeamSettings,
+} from "@openbot/contracts/ipc-memdoor";
 import { AGENT_ADMIN_CAPABILITY, AGENT_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/agent-admin-v1";
 import {
   AGENT_BACKUP_MODELS_CAPABILITY,
@@ -79,6 +83,10 @@ import {
 } from "@openbot/contracts/team-protocol/browser-proxies-v1";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import { GITHUB_SKILLS_CAPABILITY, GITHUB_SKILLS_ROUTES } from "@openbot/contracts/team-protocol/github-skills-v1";
+import {
+  MEMDOOR_TEAM_MODEL_SOURCES_CAPABILITY,
+  MEMDOOR_TEAM_MODEL_SOURCES_ROUTES,
+} from "@openbot/contracts/team-protocol/memdoor-team-model-sources-v1";
 import { MEMDOOR_TEAM_CAPABILITY, MEMDOOR_TEAM_ROUTES } from "@openbot/contracts/team-protocol/memdoor-team-v1";
 import { SKILLS_ADMIN_CAPABILITY, SKILLS_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/skills-admin-v1";
 import { sourceText } from "@openbot/i18n/source";
@@ -160,9 +168,13 @@ export function agentAdminIpcHandlers({
   }
 
   const decodeMemdoor = guardedDecoder(isMemdoorTeamSettings, "Memdoor team settings");
+  function remoteMemdoorRoutes(serverId: string) {
+    if (remoteServers.supportsCapability(serverId, MEMDOOR_TEAM_MODEL_SOURCES_CAPABILITY))
+      return MEMDOOR_TEAM_MODEL_SOURCES_ROUTES;
+    if (remoteServers.supportsCapability(serverId, MEMDOOR_TEAM_CAPABILITY)) return MEMDOOR_TEAM_ROUTES;
+    throw new Error(sourceText("error.agent.settingsLocalOnly"));
+  }
   function remoteMemdoor(serverId: string, path: string, body: unknown) {
-    if (!remoteServers.supportsCapability(serverId, MEMDOOR_TEAM_CAPABILITY))
-      throw new Error(sourceText("error.agent.settingsLocalOnly"));
     return runCauseEffect(remoteServers.request(serverId, path, decodeMemdoor, { method: "POST", body }));
   }
 
@@ -196,7 +208,7 @@ export function agentAdminIpcHandlers({
           requireMemdoorAgentId(agentId);
           return memdoorTeam.read();
         },
-        remote: (agentId, serverId) => remoteMemdoor(serverId, MEMDOOR_TEAM_ROUTES.settings, { agentId }),
+        remote: (agentId, serverId) => remoteMemdoor(serverId, remoteMemdoorRoutes(serverId).settings, { agentId }),
       }),
       saveMemdoorTeamSettings: scopedHandler(
         (value) => {
@@ -205,9 +217,13 @@ export function agentAdminIpcHandlers({
         },
         {
           local: (input) => runCauseEffect(memdoorTeam.save(input)),
-          remote: (input, serverId) => {
-            if (input.apiKey !== undefined) throw new Error("Set the API key in the desktop app on the Memdoor host.");
-            return remoteMemdoor(serverId, MEMDOOR_TEAM_ROUTES.update, input);
+          remote: ({ agentId, teamModel, decisionModel, roles, apiKey }, serverId) => {
+            if (apiKey !== undefined) throw new Error("Set the API key in the desktop app on the Memdoor host.");
+            const routes = remoteMemdoorRoutes(serverId);
+            const input = { agentId, teamModel, decisionModel, roles };
+            if (routes === MEMDOOR_TEAM_ROUTES && !isLegacyMemdoorTeamConfig(input))
+              throw new Error(sourceText("error.team.hostUpdateRequired"));
+            return remoteMemdoor(serverId, routes.update, input);
           },
         },
       ),

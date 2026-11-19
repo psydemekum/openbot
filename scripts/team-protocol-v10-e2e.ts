@@ -6,6 +6,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type AgentModelOption, LEGACY_AGENT_REASONING_EFFORTS } from "@openbot/contracts/ipc";
+import { MEMDOOR_AGENT_ID } from "@openbot/contracts/ipc-memdoor";
 import {
   createTeamProtocolV2Request,
   decodeTeamProtocolSupportV9,
@@ -28,6 +29,7 @@ import {
   teamCapabilityLists,
   teamWebRtcClientProtocol,
 } from "@openbot/contracts/team-protocol/current";
+import { optionalRouteCodec } from "@openbot/contracts/team-protocol/optional-routes";
 import {
   TEAM_REASONING_EFFORTS,
   TEAM_REASONING_EFFORTS_CAPABILITY,
@@ -49,6 +51,8 @@ import { runCauseEffect } from "../src/backend/effect-boundary";
 import { MailboxStore } from "../src/backend/mailbox-store";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
 import { SidebarLayoutStore } from "../src/backend/sidebar-layout-store";
+import { createMemdoorModelProviders } from "../src/main/memdoor-model-providers";
+import { createMemdoorTeam } from "../src/main/memdoor-team";
 import type { TeamWebRtcChannel } from "../src/main/team-webrtc-bridge";
 import { readWebHostCompatibility } from "../src/renderer/src/features/web-client/web-host-compatibility";
 
@@ -324,6 +328,23 @@ try {
     listAgents().map((agent) =>
       agent.id === source.id ? { ...agent, model: wideModel.id, reasoningEffort: "ultra" } : agent,
     );
+  let openRouterEnabled = true;
+  const memdoorTeam = createMemdoorTeam({
+    executable: join(root, "memdoor-missing"),
+    profile: userData,
+    credentials: {
+      secret: () => "sk-test-local",
+      setSecrets: () => Effect.die("Team settings cannot change the host key."),
+    },
+    openAIEnvironment: () => ({}),
+    openAIVaultKey: () => undefined,
+    modelProviders: createMemdoorModelProviders({
+      customProviders: () => [],
+      providerEnvironment: () => ({}),
+      providerKey: () => "fixture-provider-key",
+      providerOn: (provider) => openRouterEnabled && provider === "openrouter",
+    }),
+  });
   server = new TeamApiServer({
     store: team,
     agents,
@@ -356,6 +377,7 @@ try {
     sidebarLayout: sidebar,
     agentAccess: access,
     appVersion: HOST_VERSION,
+    admin: { memdoorTeam },
   });
   const port = await Effect.runPromise(server.start());
   report.host.port = port;
@@ -507,6 +529,79 @@ try {
     assert.equal(left.defaultReasoningEffort, "low");
     assert.deepEqual(left.supportedReasoningEfforts, [...LEGACY_AGENT_REASONING_EFFORTS]);
     return { full: full.defaultReasoningEffort, absent: left.defaultReasoningEffort };
+  });
+
+  await step("HTTP protocol 10: Memdoor model pins require the new settings routes", async () => {
+    const legacyCapability = "memdoor-team-v1";
+    const modelSourcesCapability = "memdoor-team-model-sources-v1";
+    assert.ok(protocol10Set.expanded.includes(modelSourcesCapability));
+    assert.ok(protocol10Set.expanded.includes(legacyCapability));
+    const headers = teamCapabilityHeaders(TEAM_PROTOCOL_V10, teamCapabilitiesForProtocol(TEAM_PROTOCOL_V10));
+    const legacyHeaders = teamCapabilityHeaders(
+      TEAM_PROTOCOL_V10,
+      teamCapabilitiesForProtocol(TEAM_PROTOCOL_V10).filter((capability) => capability !== modelSourcesCapability),
+    );
+    const ownerLogin = await http(
+      port,
+      { protocol: TEAM_PROTOCOL_V10, method: "POST", path: "/v1/auth/login", body: OWNER },
+      headers,
+    );
+    assert.equal(ownerLogin.status, 200);
+    const ownerToken = text(record(ownerLogin.body, "owner login").sessionToken, "owner session token");
+    const settingsPath = "/v1/admin/agents/memdoor-team";
+    const currentPath = `${settingsPath}/v2`;
+    const agentId = MEMDOOR_AGENT_ID;
+    const call = (path: string, body: unknown = { agentId }, requestHeaders = headers, sessionToken = ownerToken) =>
+      http(port, { protocol: TEAM_PROTOCOL_V10, method: "POST", path, token: sessionToken, body }, requestHeaders);
+
+    const legacy = await call(settingsPath, { agentId }, legacyHeaders);
+    assert.equal(legacy.status, 200, JSON.stringify(legacy.body));
+    assert.equal(record(legacy.body, "legacy settings").teamModel, "gpt-6.2-sol");
+    assert.ok(!Object.hasOwn(record(legacy.body, "legacy settings"), "modelSources"));
+    const unsupported = await call(currentPath, { agentId }, legacyHeaders);
+    assert.equal(unsupported.status, 400);
+    assert.equal((await call(currentPath, { agentId }, headers, token)).status, 403);
+
+    const config = { agentId, teamModel: "gpt-6.2-sol", decisionModel: "gpt-6-luna", roles: {} };
+    const legacySave = await call(`${settingsPath}/update`, config, legacyHeaders);
+    assert.equal(legacySave.status, 200, JSON.stringify(legacySave.body));
+    assert.deepEqual(legacySave.body, legacy.body);
+
+    const codec = optionalRouteCodec(`${currentPath}/update`);
+    assert.ok(codec);
+    const wireMaximum = `openrouter:host/${"x".repeat(240)}`;
+    assert.deepEqual(codec.request({ ...config, teamModel: wireMaximum }), { ...config, teamModel: wireMaximum });
+    assert.throws(() => codec.request({ ...config, teamModel: `${wireMaximum}x` }));
+    assert.equal((await call(`${currentPath}/update`, { ...config, teamModel: wireMaximum })).status, 400);
+
+    const pin = `openrouter:host/${"x".repeat(155)}`;
+    const pinnedConfig = { ...config, roles: { solve: { model: pin, effort: "high", prompt: "Review changes." } } };
+    assert.equal((await call(`${currentPath}/update`, { ...pinnedConfig, decisionModel: pin })).status, 400);
+    assert.equal((await call(`${currentPath}/update`, { ...pinnedConfig, apiKey: "sk-test-only" })).status, 400);
+    openRouterEnabled = false;
+    assert.equal((await call(`${currentPath}/update`, pinnedConfig)).status, 400);
+    openRouterEnabled = true;
+    const saved = await call(`${currentPath}/update`, pinnedConfig);
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    const current = await call(currentPath);
+    assert.equal(current.status, 200, JSON.stringify(current.body));
+    assert.deepEqual(current.body, {
+      teamModel: "gpt-6.2-sol",
+      decisionModel: "gpt-6-luna",
+      roles: pinnedConfig.roles,
+      hasApiKey: true,
+      runtime: "missing",
+      modelSources: ["openrouter"],
+    });
+
+    const outdatedRead = await call(settingsPath, { agentId }, legacyHeaders);
+    const outdatedSave = await call(`${settingsPath}/update`, config, legacyHeaders);
+    for (const response of [outdatedRead, outdatedSave]) {
+      assert.equal(response.status, 426, JSON.stringify(response.body));
+      assert.equal(record(response.body, "update required").code, "client_update_required");
+    }
+    assert.deepEqual((await call(currentPath)).body, current.body);
+    return { newRoutes: [saved.status, current.status], legacyRoutes: [outdatedRead.status, outdatedSave.status] };
   });
 
   await step(
