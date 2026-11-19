@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       revision:
-        description: Fork build revision (1 to 99)
+        description: Minimum fork revision (0 selects automatically)
         type: number
-        default: 1
+        default: 0
       publish:
         description: Publish the verified installer
         type: boolean
@@ -39,54 +39,75 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Select the latest stable Windows release
+      - name: Select Windows sources and version
         id: release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          FORK_REVISION: ${{ inputs.revision || 1 }}
+          FORK_REVISION: ${{ inputs.revision || 0 }}
           FORK_PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
         run: |
           $ErrorActionPreference = 'Stop'
-          function Get-WindowsRelease($repository) {
+          function Get-Releases($repository) {
             $json = gh api --paginate --slurp "repos/$repository/releases?per_page=100"
             if ($LASTEXITCODE -ne 0) { throw "Cannot read releases from $repository." }
             $pages = ConvertFrom-Json -InputObject ($json -join [Environment]::NewLine) -NoEnumerate
             foreach ($page in $pages) {
-              foreach ($release in $page) {
-                if (-not $release.draft -and -not $release.prerelease -and
-                    $release.tag_name -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -and
-                    $release.assets.name -contains 'latest.yml' -and
-                    $release.assets.name -contains "OpenBot-$($release.tag_name.Substring(1))-x64.exe") {
-                  $release
-                }
-              }
+              foreach ($release in $page) { $release }
             }
           }
-          $release = Get-WindowsRelease $env:UPSTREAM_REPO |
-            Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
+          function Get-LatestWindowsRelease($releases) {
+            $releases | Where-Object {
+              -not $_.draft -and -not $_.prerelease -and
+              $_.tag_name -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -and
+              $_.assets.name -contains 'latest.yml' -and
+              $_.assets.name -contains "OpenBot-$($_.tag_name.Substring(1))-x64.exe"
+            } | Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
+          }
+          $release = Get-LatestWindowsRelease @(Get-Releases $env:UPSTREAM_REPO)
           if (-not $release) { throw 'No stable Windows desktop release found.' }
           $original = [version]$release.tag_name.Substring(1)
-          $revision = 0
-          if (-not [int]::TryParse($env:FORK_REVISION, [ref]$revision) -or $revision -lt 1 -or $revision -gt 99) {
-            throw 'The fork revision must be an integer between 1 and 99.'
+          $requestedRevision = 0
+          if (-not [int]::TryParse($env:FORK_REVISION, [ref]$requestedRevision) -or $requestedRevision -lt 0 -or $requestedRevision -gt 99) {
+            throw 'The fork revision must be an integer between 0 and 99.'
           }
-          $patch = [long]$original.Build * 100 + $revision
-          if ($patch -gt 65535) { throw 'The fork patch exceeds the Windows version limit.' }
-          $version = [version]::new($original.Major, $original.Minor, [int]$patch)
-          $previous = Get-WindowsRelease $env:GITHUB_REPOSITORY |
-            Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
+          $basePatch = [long]$original.Build * 100
+          $lastRevision = [Math]::Min([long]99, 65535 - $basePatch)
+          $revision = [Math]::Max(1, $requestedRevision)
+          if ($revision -gt $lastRevision) { throw 'The fork patch exceeds the Windows version limit.' }
+
+          $forkReleases = @(Get-Releases $env:GITHUB_REPOSITORY)
+          $previous = Get-LatestWindowsRelease $forkReleases
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read the fork release branch commit.' }
           $testRepo = $env:UPSTREAM_REPO
           $testTag = $release.tag_name
           if ($previous) {
-            if ($version -gt [version]$previous.tag_name.Substring(1)) {
-              $testRepo = $env:GITHUB_REPOSITORY
-              $testTag = $previous.tag_name
-            } elseif ($env:FORK_PUBLISH -eq 'true') {
-              Write-Host "Fork v$version is already covered by $($previous.tag_name)."
-              return
+            $previousVersion = [version]$previous.tag_name.Substring(1)
+            $candidate = [version]::new($original.Major, $original.Minor, [int]($basePatch + $revision))
+            if ($candidate -le $previousVersion) {
+              $rangeEnd = [version]::new($original.Major, $original.Minor, [int]($basePatch + $lastRevision))
+              if ($previousVersion -gt $rangeEnd) { throw "The latest fork is based on a newer original release than $($release.tag_name)." }
+              $publishedCommit = git rev-parse --verify "refs/tags/$($previous.tag_name)^{commit}"
+              if ($LASTEXITCODE -ne 0) { throw "Cannot resolve the source of $($previous.tag_name)." }
+              if ($head -eq $publishedCommit -and $env:FORK_PUBLISH -eq 'true') {
+                Write-Host "Fork source $head is already published in $($previous.tag_name)."
+                return
+              }
+              $revision = $previousVersion.Build - $basePatch + 1
             }
+            $testRepo = $env:GITHUB_REPOSITORY
+            $testTag = $previous.tag_name
           }
+
+          # A failed upload can leave a draft. Reuse its number only for the same source.
+          while ($revision -le $lastRevision) {
+            $version = [version]::new($original.Major, $original.Minor, [int]($basePatch + $revision))
+            $draft = $forkReleases | Where-Object { $_.draft -and $_.tag_name -eq "v$version" }
+            if (-not $draft -or $draft.target_commitish -eq $head) { break }
+            $revision++
+          }
+          if ($revision -gt $lastRevision) { throw "No fork revisions remain for $($release.tag_name)." }
           @("build=true", "upstream=$($release.tag_name)", "version=$version", "base_repo=$testRepo", "base_tag=$testTag") |
             Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
 
